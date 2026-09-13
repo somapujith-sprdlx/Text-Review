@@ -1,4 +1,6 @@
 import { buildPrompt } from './prompts.js'
+import { callGemini } from './providers/gemini.js'
+import { callGroq } from './providers/groq.js'
 import type { StyleId } from '../../routes/styles.js'
 
 export interface GenerateImprovementInput {
@@ -8,42 +10,31 @@ export interface GenerateImprovementInput {
   customInstruction?: string
 }
 
-interface GeminiResponse {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>
-    }
-  }>
-}
+type ProviderCall = (system: string, user: string) => Promise<string>
+
+// Tried in order; if one throws (quota exhausted, rate limited, key
+// missing, transient outage) the next is tried instead of failing the
+// whole request. Order = preference, not reliability — put the provider
+// you want to bias toward first.
+const PROVIDER_CHAIN: Array<{ name: string; call: ProviderCall }> = [
+  { name: 'gemini', call: callGemini },
+  { name: 'groq', call: callGroq },
+]
 
 export async function generateImprovement(input: GenerateImprovementInput): Promise<string> {
   const { system, user } = buildPrompt(input.style, input.text, input.customInstruction)
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
-  const apiKey = process.env.GEMINI_API_KEY
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature: 0.7 },
-      }),
-    },
-  )
+  const failures: string[] = []
 
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '')
-    throw new Error(`Gemini API error ${res.status}: ${errBody}`)
+  for (const provider of PROVIDER_CHAIN) {
+    try {
+      return await provider.call(system, user)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`generateImprovement: provider "${provider.name}" failed, trying next.`, message)
+      failures.push(`${provider.name}: ${message}`)
+    }
   }
 
-  const data = (await res.json()) as GeminiResponse
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text
-
-  if (!content) {
-    throw new Error('Gemini returned an empty response')
-  }
-  return content.trim()
+  throw new Error(`All AI providers failed — ${failures.join(' | ')}`)
 }

@@ -1,6 +1,6 @@
 import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, StyleOption } from '../types/index.js'
 
-const BASE_URL = 'http://localhost:8787'
+const BASE_URL = 'http://localhost:8799'
 
 export async function fetchStyles(): Promise<StyleOption[]> {
   let res: Response
@@ -27,12 +27,25 @@ export async function improveText(req: ImproveRequest): Promise<ImproveResponse>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
     })
-  } catch {
-    throw new Error('Something went wrong. Try again.')
+  } catch (networkErr) {
+    console.error('Text Quality Enhancer: fetch to /api/improve threw', networkErr)
+    // Preserve the real cause (network failure, CORS rejection, etc.) on
+    // the error object so callers that log server-side (e.g. the service
+    // worker) can diagnose it, while the message itself stays the generic
+    // user-facing copy required everywhere this error surfaces in the UI.
+    throw new Error('Something went wrong. Try again.', { cause: networkErr })
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as ImproveErrorResponse | null
+    const bodyText = await res.text().catch(() => '')
+    console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)
+    const body = ((): ImproveErrorResponse | null => {
+      try {
+        return JSON.parse(bodyText)
+      } catch {
+        return null
+      }
+    })()
     throw new Error(body?.error || 'Something went wrong. Try again.')
   }
 

@@ -19,7 +19,11 @@ describe('buildPrompt', () => {
 
 describe('generateImprovement', () => {
   beforeEach(() => {
-    process.env.GEMINI_API_KEY = 'test-key'
+    process.env.GEMINI_API_KEY = 'test-gemini-key'
+    process.env.GROQ_API_KEY = 'test-groq-key'
+  })
+
+  it('returns the rewritten text from the first provider (Gemini) when it succeeds', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -31,11 +35,50 @@ describe('generateImprovement', () => {
         }),
       }),
     )
-  })
 
-  it('returns the rewritten text from the Gemini response', async () => {
     const { generateImprovement } = await import('../src/services/ai/provider.js')
     const result = await generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' })
     expect(result).toBe('Dear Sir, I would like to request an extension.')
+  })
+
+  it('falls back to the next provider (Groq) when the first one fails', async () => {
+    const fetchMock = vi
+      .fn()
+      // First call: Gemini — simulate a quota/rate-limit failure.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => 'quota exceeded',
+      })
+      // Second call: Groq — succeeds.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: 'Dear Sir, I would like to request an extension.' } }],
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { generateImprovement } = await import('../src/services/ai/provider.js')
+    const result = await generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' })
+
+    expect(result).toBe('Dear Sir, I would like to request an extension.')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('throws a combined error when every provider fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => 'upstream down',
+      }),
+    )
+
+    const { generateImprovement } = await import('../src/services/ai/provider.js')
+    await expect(
+      generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' }),
+    ).rejects.toThrow('All AI providers failed')
   })
 })

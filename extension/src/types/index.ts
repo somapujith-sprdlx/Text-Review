@@ -25,3 +25,13 @@ export interface SelectionMessage {
   type: 'OPEN_SIDE_PANEL_WITH_SELECTION'
   text: string
 }
+
+export interface QuickImproveDoneMessage {
+  type: 'QUICK_IMPROVE_DONE'
+  ok: boolean
+}
+
+export interface QuickModeSettings {
+  enabled: boolean
+  styleId: string
+}

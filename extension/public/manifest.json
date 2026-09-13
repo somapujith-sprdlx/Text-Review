@@ -3,7 +3,7 @@
   "name": "Text Quality Enhancer",
   "version": "0.1.0",
   "description": "Improve selected text on any webpage using AI-powered writing styles.",
-  "permissions": ["sidePanel", "storage", "activeTab", "scripting"],
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "contextMenus"],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

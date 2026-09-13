@@ -10,10 +10,10 @@ export function StyleButton({ style, active, onSelect }: Props) {
   return (
     <button
       onClick={() => onSelect(style.id)}
-      className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+      className={`px-3 py-1.5 rounded text-sm font-medium border-b-2 transition-colors focus:outline-none focus:ring-2 focus:ring-brass ${
         active
-          ? 'bg-indigo-600 text-white border-indigo-600'
-          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          ? 'bg-racing-900 text-racing-50 border-brass'
+          : 'bg-white text-racing-900 border-transparent hover:bg-racing-100'
       }`}
       title={style.description}
     >
