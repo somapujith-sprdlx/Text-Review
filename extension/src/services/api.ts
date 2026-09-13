@@ -3,11 +3,19 @@ import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, StyleOption
 const BASE_URL = 'http://localhost:8787'
 
 export async function fetchStyles(): Promise<StyleOption[]> {
-  const res = await fetch(`${BASE_URL}/api/styles`)
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/styles`)
+  } catch {
+    throw new Error('Something went wrong. Try again.')
+  }
   if (!res.ok) {
     throw new Error('Something went wrong. Try again.')
   }
-  const body = (await res.json()) as { styles: StyleOption[] }
+  const body = (await res.json().catch(() => null)) as { styles: StyleOption[] } | null
+  if (!body) {
+    throw new Error('Something went wrong. Try again.')
+  }
   return body.styles
 }
 
