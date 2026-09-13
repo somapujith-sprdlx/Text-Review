@@ -47,7 +47,8 @@ improveRoute.post('/', async (c) => {
       style,
       outputText,
     })
-  } catch {
+  } catch (err) {
+    console.error('generateImprovement failed:', err)
     return c.json({ error: 'Something went wrong. Try again.' }, 502)
   }
 })

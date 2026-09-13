@@ -17,23 +17,23 @@ describe('buildPrompt', () => {
   })
 })
 
-vi.mock('openai', () => {
-  const create = vi.fn().mockResolvedValue({
-    choices: [{ message: { content: 'Dear Sir, I would like to request an extension.' } }],
-  })
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      chat: { completions: { create } },
-    })),
-  }
-})
-
 describe('generateImprovement', () => {
   beforeEach(() => {
-    process.env.OPENAI_API_KEY = 'test-key'
+    process.env.GEMINI_API_KEY = 'test-key'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          candidates: [
+            { content: { parts: [{ text: 'Dear Sir, I would like to request an extension.' }] } },
+          ],
+        }),
+      }),
+    )
   })
 
-  it('returns the rewritten text from the OpenAI response', async () => {
+  it('returns the rewritten text from the Gemini response', async () => {
     const { generateImprovement } = await import('../src/services/ai/provider.js')
     const result = await generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' })
     expect(result).toBe('Dear Sir, I would like to request an extension.')
