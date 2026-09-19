@@ -9,7 +9,8 @@ export function rateLimit(opts: { limit: number; windowMs: number }) {
   const buckets = new Map<string, Bucket>()
 
   return async (c: Context, next: Next) => {
-    const ip = c.req.header('x-forwarded-for') || 'unknown'
+    // cf-connecting-ip is set by Cloudflare and can't be spoofed by the client.
+    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
     const now = Date.now()
     const bucket = buckets.get(ip)
 

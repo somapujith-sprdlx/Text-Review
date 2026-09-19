@@ -1,4 +1,3 @@
-import 'dotenv/config'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { stylesRoute } from './routes/styles.js'
@@ -19,9 +18,5 @@ app.use('/api/improve', rateLimit({ limit: 20, windowMs: 60_000 }))
 app.route('/api/styles', stylesRoute)
 app.route('/api/improve', improveRoute)
 
-if (process.env.NODE_ENV !== 'test') {
-  const { serve } = await import('@hono/node-server')
-  const port = Number(process.env.PORT) || 8787
-  serve({ fetch: app.fetch, port })
-  console.log(`Backend listening on http://localhost:${port}`)
-}
+// Cloudflare Workers entry. Local Node dev lives in server.ts.
+export default app

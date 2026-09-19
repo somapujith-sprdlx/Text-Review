@@ -1,0 +1,19 @@
+name = "text-quality-enhancer-api"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+# nodejs_compat also makes Workers populate process.env from [vars] and
+# secrets, which the provider code and CORS check read.
+compatibility_flags = ["nodejs_compat"]
+
+# Non-secret config. API keys are secrets — never put them here:
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put GROQ_API_KEY
+[vars]
+# Must exactly match the extension's origin (chrome-extension://<id>).
+# The ID changes if the unpacked folder moves or the extension is published.
+ALLOWED_ORIGIN = "chrome-extension://gekegjbelncckiijjlbfmemoipdegfng"
+GEMINI_MODEL = "gemini-3.6-flash"
+GROQ_MODEL = "openai/gpt-oss-120b"
+
+[observability]
+enabled = true

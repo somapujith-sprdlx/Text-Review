@@ -1,6 +1,7 @@
 import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, StyleOption } from '../types/index.js'
 
-const BASE_URL = 'http://localhost:8799'
+// Set VITE_API_BASE_URL in extension/.env.production to the deployed Worker URL.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
 
 export async function fetchStyles(): Promise<StyleOption[]> {
   let res: Response
