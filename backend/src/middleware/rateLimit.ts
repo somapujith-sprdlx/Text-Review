@@ -21,7 +21,7 @@ export function rateLimit(opts: { limit: number; windowMs: number }) {
     }
 
     if (bucket.count >= opts.limit) {
-      return c.json({ error: "You've reached your current usage limit." }, 429)
+      return c.json({ error: "You've reached your current usage limit.", code: 'LIMIT_REACHED' }, 429)
     }
 
     bucket.count += 1

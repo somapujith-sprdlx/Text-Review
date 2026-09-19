@@ -2,6 +2,8 @@ import type { QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } fro
 
 let floatingButton: HTMLButtonElement | null = null
 let isProcessing = false
+// 'setup' = Quick Mode hit the free limit and the button now leads to the Groq-key setup.
+let buttonMode: 'improve' | 'setup' = 'improve'
 
 function removeFloatingButton() {
   if (isProcessing) return
@@ -17,6 +19,21 @@ function setButtonProcessing(button: HTMLButtonElement) {
   button.textContent = '⏳ Improving…'
 }
 
+function offerKeySetup(button: HTMLButtonElement, reason: 'limit' | 'key') {
+  isProcessing = false
+  buttonMode = 'setup'
+  button.disabled = false
+  button.style.cursor = 'pointer'
+  button.style.opacity = '1'
+  button.style.background = '#C6A15B'
+  button.style.color = '#07281E'
+  button.textContent =
+    reason === 'limit' ? '🔑 Free limit reached — add your Groq key' : '🔑 Groq key rejected — add a new one'
+  setTimeout(() => {
+    if (floatingButton === button && buttonMode === 'setup') removeFloatingButton()
+  }, 10_000)
+}
+
 function flashButtonError(button: HTMLButtonElement) {
   button.textContent = '⚠️ Failed — try again'
   button.style.background = '#B91C1C'
@@ -28,6 +45,7 @@ function flashButtonError(button: HTMLButtonElement) {
 
 function showFloatingButton(selectionText: string, rect: DOMRect) {
   removeFloatingButton()
+  buttonMode = 'improve'
 
   const button = document.createElement('button')
   button.textContent = '✨ Improve Text'
@@ -38,7 +56,7 @@ function showFloatingButton(selectionText: string, rect: DOMRect) {
   button.style.padding = '6px 10px'
   button.style.borderRadius = '6px'
   button.style.border = 'none'
-  button.style.background = '#4F46E5'
+  button.style.background = '#0B3D2E'
   button.style.color = '#fff'
   button.style.fontSize = '13px'
   button.style.cursor = 'pointer'
@@ -47,7 +65,8 @@ function showFloatingButton(selectionText: string, rect: DOMRect) {
   button.addEventListener('mousedown', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    const message: SelectionMessage = { type: 'OPEN_SIDE_PANEL_WITH_SELECTION', text: selectionText }
+    const forcePanel = buttonMode === 'setup'
+    const message: SelectionMessage = { type: 'OPEN_SIDE_PANEL_WITH_SELECTION', text: selectionText, forcePanel }
     chrome.runtime.sendMessage(message).catch((err) => {
       console.error('Text Quality Enhancer: failed to reach the extension background script.', err)
     })
@@ -58,6 +77,11 @@ function showFloatingButton(selectionText: string, rect: DOMRect) {
     // click has some visible effect rather than looking like nothing
     // happened. Non-Quick-Mode clicks still remove it right away, since
     // the side panel opening is itself the feedback.
+    if (forcePanel) {
+      removeFloatingButton()
+      return
+    }
+
     chrome.storage.local.get('quickMode').then((result) => {
       const quickMode = result.quickMode as QuickModeSettings | undefined
       if (quickMode?.enabled && floatingButton === button) {
@@ -79,6 +103,8 @@ chrome.runtime.onMessage.addListener((message: QuickImproveDoneMessage) => {
   if (message.ok) {
     isProcessing = false
     removeFloatingButton()
+  } else if (message.reason === 'limit' || message.reason === 'key') {
+    offerKeySetup(floatingButton, message.reason)
   } else {
     flashButtonError(floatingButton)
   }

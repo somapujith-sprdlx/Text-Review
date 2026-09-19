@@ -6,6 +6,7 @@ vi.mock('../src/services/ai/provider.js', () => ({
 
 import { app } from '../src/index.js'
 import { generateImprovement } from '../src/services/ai/provider.js'
+import { QuotaExhaustedError } from '../src/services/ai/errors.js'
 
 const mockedGenerate = vi.mocked(generateImprovement)
 
@@ -63,5 +64,15 @@ describe('POST /api/improve', () => {
 
     const body = await res.json()
     expect(body.error).toBe('Something went wrong. Try again.')
+  })
+
+  it('returns 429 with LIMIT_REACHED when the shared provider quota is exhausted', async () => {
+    mockedGenerate.mockRejectedValue(new QuotaExhaustedError('All AI providers failed — gemini: 429'))
+
+    const res = await post({ text: 'hello', style: 'formal' })
+    expect(res.status).toBe(429)
+
+    const body = await res.json()
+    expect(body.code).toBe('LIMIT_REACHED')
   })
 })

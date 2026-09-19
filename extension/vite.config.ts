@@ -4,6 +4,10 @@ import { resolve } from 'node:path'
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    // The extension imports ../shared (styles + prompts shared with the backend).
+    fs: { allow: ['..'] },
+  },
   build: {
     rollupOptions: {
       input: {

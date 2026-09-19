@@ -81,4 +81,21 @@ describe('generateImprovement', () => {
       generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' }),
     ).rejects.toThrow('All AI providers failed')
   })
+
+  it('throws QuotaExhaustedError when every provider is out of quota', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: async () => 'quota exceeded',
+      }),
+    )
+
+    const { generateImprovement } = await import('../src/services/ai/provider.js')
+    const { QuotaExhaustedError } = await import('../src/services/ai/errors.js')
+    await expect(
+      generateImprovement({ text: 'hey can you extend the deadline', style: 'formal' }),
+    ).rejects.toBeInstanceOf(QuotaExhaustedError)
+  })
 })

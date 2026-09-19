@@ -1,3 +1,5 @@
+import { ProviderHttpError } from '../errors.js'
+
 interface GeminiResponse {
   candidates?: Array<{
     content?: {
@@ -29,7 +31,7 @@ export async function callGemini(system: string, user: string): Promise<string> 
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => '')
-    throw new Error(`Gemini API error ${res.status}: ${errBody}`)
+    throw new ProviderHttpError('Gemini', res.status, errBody)
   }
 
   const data = (await res.json()) as GeminiResponse

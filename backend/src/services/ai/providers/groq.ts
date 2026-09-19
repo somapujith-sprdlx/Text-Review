@@ -1,3 +1,5 @@
+import { ProviderHttpError } from '../errors.js'
+
 interface GroqResponse {
   choices?: Array<{
     message?: { content?: string }
@@ -30,7 +32,7 @@ export async function callGroq(system: string, user: string): Promise<string> {
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => '')
-    throw new Error(`Groq API error ${res.status}: ${errBody}`)
+    throw new ProviderHttpError('Groq', res.status, errBody)
   }
 
   const data = (await res.json()) as GroqResponse

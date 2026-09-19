@@ -2,6 +2,7 @@ import { buildPrompt } from './prompts.js'
 import { callGemini } from './providers/gemini.js'
 import { callGroq } from './providers/groq.js'
 import type { StyleId } from '../../routes/styles.js'
+import { ProviderHttpError, QuotaExhaustedError } from './errors.js'
 
 export interface GenerateImprovementInput {
   text: string
@@ -25,6 +26,7 @@ export async function generateImprovement(input: GenerateImprovementInput): Prom
   const { system, user } = buildPrompt(input.style, input.text, input.customInstruction)
 
   const failures: string[] = []
+  let quotaHit = false
 
   for (const provider of PROVIDER_CHAIN) {
     try {
@@ -33,8 +35,10 @@ export async function generateImprovement(input: GenerateImprovementInput): Prom
       const message = err instanceof Error ? err.message : String(err)
       console.error(`generateImprovement: provider "${provider.name}" failed, trying next.`, message)
       failures.push(`${provider.name}: ${message}`)
+      if (err instanceof ProviderHttpError && err.status === 429) quotaHit = true
     }
   }
 
-  throw new Error(`All AI providers failed — ${failures.join(' | ')}`)
+  const summary = `All AI providers failed — ${failures.join(' | ')}`
+  throw quotaHit ? new QuotaExhaustedError(summary) : new Error(summary)
 }

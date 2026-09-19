@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { generateImprovement } from '../services/ai/provider.js'
+import { QuotaExhaustedError } from '../services/ai/errors.js'
 import { STYLES, type StyleId } from './styles.js'
 
 const VALID_STYLE_IDS = new Set(STYLES.map((s) => s.id))
@@ -49,6 +50,12 @@ improveRoute.post('/', async (c) => {
     })
   } catch (err) {
     console.error('generateImprovement failed:', err)
+    if (err instanceof QuotaExhaustedError) {
+      return c.json(
+        { error: "You've reached your current usage limit.", code: 'LIMIT_REACHED' },
+        429,
+      )
+    }
     return c.json({ error: 'Something went wrong. Try again.' }, 502)
   }
 })

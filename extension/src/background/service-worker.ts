@@ -1,5 +1,6 @@
 import type { QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
 import { improveText } from '../services/api.js'
+import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceActiveFieldText } from '../services/insertText.js'
 
 // Cached in memory (not read fresh per-trigger) so the decision to open the
@@ -33,6 +34,7 @@ function openPanelWithSelection(tabId: number, text: string) {
 
 async function quickImprove(tabId: number, text: string, styleId: string) {
   let ok = false
+  let reason: QuickImproveDoneMessage['reason']
   try {
     const result = await improveText({ text, style: styleId })
     await chrome.scripting.executeScript({
@@ -42,6 +44,7 @@ async function quickImprove(tabId: number, text: string, styleId: string) {
     })
     ok = true
   } catch (err) {
+    reason = err instanceof LimitReachedError ? 'limit' : err instanceof InvalidKeyError ? 'key' : 'error'
     // Quick Mode has no in-page UI to surface a detailed error in — the
     // floating button just stops its spinner and briefly flashes red (see
     // content script) — but still log server-side (console) so a failed
@@ -54,15 +57,15 @@ async function quickImprove(tabId: number, text: string, styleId: string) {
     )
   }
 
-  const doneMessage: QuickImproveDoneMessage = { type: 'QUICK_IMPROVE_DONE', ok }
+  const doneMessage: QuickImproveDoneMessage = { type: 'QUICK_IMPROVE_DONE', ok, reason }
   chrome.tabs.sendMessage(tabId, doneMessage).catch(() => {
     // The content script may have been torn down (navigation, tab closed)
     // before this arrived — nothing to update in that case, safe to ignore.
   })
 }
 
-function handleTrigger(tabId: number, text: string) {
-  if (cachedQuickMode?.enabled) {
+function handleTrigger(tabId: number, text: string, forcePanel = false) {
+  if (!forcePanel && cachedQuickMode?.enabled) {
     quickImprove(tabId, text, cachedQuickMode.styleId)
     return
   }
@@ -80,7 +83,7 @@ chrome.runtime.onMessage.addListener((message: SelectionMessage, sender) => {
     return
   }
 
-  handleTrigger(tabId, message.text)
+  handleTrigger(tabId, message.text, message.forcePanel)
 })
 
 // The service worker re-executes this top-level code on every cold start
