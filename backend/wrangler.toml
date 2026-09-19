@@ -1,4 +1,4 @@
-name = "text-quality-enhancer-api"
+name = "text-review"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 # nodejs_compat also makes Workers populate process.env from [vars] and
