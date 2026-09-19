@@ -64,8 +64,18 @@ async function quickImprove(tabId: number, text: string, styleId: string) {
   })
 }
 
-function handleTrigger(tabId: number, text: string, forcePanel = false) {
-  if (!forcePanel && cachedQuickMode?.enabled) {
+// Quick Mode writes its result back by injecting a script into the tab, which
+// Chrome refuses on chrome://, chrome-extension://, about: and similar pages
+// ("Cannot access a chrome:// URL"). tab.url is only populated for pages the
+// extension has host access to, so a missing URL means "not injectable" too.
+function canInjectInto(tabUrl: string | undefined): boolean {
+  return tabUrl !== undefined && /^https?:\/\//.test(tabUrl)
+}
+
+function handleTrigger(tabId: number, text: string, tabUrl: string | undefined, forcePanel = false) {
+  // Checked before calling the API, so a page we can't write back to doesn't
+  // burn a request — the side panel handles it instead (and still offers Copy).
+  if (!forcePanel && cachedQuickMode?.enabled && canInjectInto(tabUrl)) {
     quickImprove(tabId, text, cachedQuickMode.styleId)
     return
   }
@@ -83,7 +93,7 @@ chrome.runtime.onMessage.addListener((message: SelectionMessage, sender) => {
     return
   }
 
-  handleTrigger(tabId, message.text, message.forcePanel)
+  handleTrigger(tabId, message.text, sender.tab?.url, message.forcePanel)
 })
 
 // The service worker re-executes this top-level code on every cold start
@@ -104,5 +114,5 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     return
   }
 
-  handleTrigger(tab.id, info.selectionText)
+  handleTrigger(tab.id, info.selectionText, tab.url)
 })
