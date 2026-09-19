@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { buildPrompt } from '../src/services/ai/prompts.js'
+import { STYLES } from '../../shared/styles.js'
 
 describe('buildPrompt', () => {
   it('builds a formal-style prompt containing the rules and the text', () => {
@@ -14,6 +15,19 @@ describe('buildPrompt', () => {
   it('includes the custom instruction for the custom style', () => {
     const { system } = buildPrompt('custom', 'some text', 'Make this sound like a LinkedIn post')
     expect(system).toContain('Make this sound like a LinkedIn post')
+  })
+
+  it('gives every style a task and the finance-safety rules', () => {
+    const tasks = new Set<string>()
+    for (const { id } of STYLES) {
+      const { system } = buildPrompt(id, 'ARR is ₹5 Cr')
+      expect(system, id).toContain('never change, round, convert or reformat numbers')
+      expect(system, id).toContain('Indian digit grouping')
+      expect(system, id).not.toContain('undefined')
+      tasks.add(system.split('RULES:')[0])
+    }
+    // No two styles share the same task text.
+    expect(tasks.size).toBe(STYLES.length)
   })
 })
 

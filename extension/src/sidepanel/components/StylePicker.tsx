@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { STYLES } from '../../../../shared/styles.js'
 
-const PRIMARY = STYLES.slice(0, 6)
-const MORE = STYLES.slice(6)
-
 interface Props {
   value: string
+  // Style ids shown up front, in order; every other style sits under "More".
+  primaryIds: readonly string[]
   onPick: (id: string) => void
   customInstruction: string
   onCustomChange: (value: string) => void
@@ -40,19 +39,21 @@ function Chip({
   )
 }
 
-export function StylePicker({ value, onPick, customInstruction, onCustomChange, onCustomApply }: Props) {
+export function StylePicker({ value, primaryIds, onPick, customInstruction, onCustomChange, onCustomApply }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const primary = primaryIds.flatMap((id) => STYLES.filter((s) => s.id === id))
+  const more = STYLES.filter((s) => !primaryIds.includes(s.id))
   // Keep the extra styles open whenever one of them is the active choice.
-  const showMore = expanded || MORE.some((s) => s.id === value)
+  const showMore = expanded || more.some((s) => s.id === value)
 
   return (
     <section aria-label="Writing style">
       <div className="flex flex-wrap gap-1.5">
-        {PRIMARY.map((s) => (
+        {primary.map((s) => (
           <Chip key={s.id} label={s.label} title={s.description} active={value === s.id} onClick={() => onPick(s.id)} />
         ))}
         {showMore &&
-          MORE.map((s) => (
+          more.map((s) => (
             <Chip key={s.id} label={s.label} title={s.description} active={value === s.id} onClick={() => onPick(s.id)} />
           ))}
         {!showMore && (

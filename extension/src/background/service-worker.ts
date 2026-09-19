@@ -1,7 +1,7 @@
 import type { QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
 import { improveText } from '../services/api.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
-import { replaceActiveFieldText } from '../services/insertText.js'
+import { replaceSelectionText } from '../services/insertText.js'
 
 // Cached in memory (not read fresh per-trigger) so the decision to open the
 // side panel can stay synchronous within the user-gesture callback — an
@@ -39,8 +39,8 @@ async function quickImprove(tabId: number, text: string, styleId: string) {
     const result = await improveText({ text, style: styleId })
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: replaceActiveFieldText,
-      args: [result.outputText],
+      func: replaceSelectionText,
+      args: [result.outputText, text],
     })
     ok = true
   } catch (err) {

@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { STYLES } from '../../../../shared/styles.js'
 import { maskKey } from '../../services/keyStore.js'
+import { ROLE_OPTIONS, type WriterRole } from '../../services/roles.js'
 import type { QuickModeSettings } from '../../types/index.js'
 import { ArrowLeftIcon } from './Icons.js'
 import { KeySetup } from './KeySetup.js'
 
 interface Props {
+  role: WriterRole
+  onRoleChange: (role: WriterRole) => void
   quickMode: QuickModeSettings
   onQuickModeChange: (next: QuickModeSettings) => void
   savedKey: string | null
@@ -14,9 +17,10 @@ interface Props {
   onBack: () => void
 }
 
-const DEFAULT_STYLE_OPTIONS = STYLES.filter((s) => s.id !== 'custom')
+const TONE_STYLES = STYLES.filter((s) => s.group === 'tone' && s.id !== 'custom')
+const BUSINESS_STYLES = STYLES.filter((s) => s.group === 'business')
 
-export function Settings({ quickMode, onQuickModeChange, savedKey, onRemoveKey, onKeySaved, onBack }: Props) {
+export function Settings({ role, onRoleChange, quickMode, onQuickModeChange, savedKey, onRemoveKey, onKeySaved, onBack }: Props) {
   const [addingKey, setAddingKey] = useState(false)
 
   return (
@@ -34,6 +38,25 @@ export function Settings({ quickMode, onQuickModeChange, savedKey, onRemoveKey, 
       </header>
 
       <div className="space-y-4">
+        <section className="rounded-xl border border-racing-900/10 bg-white p-4 shadow-sm">
+          <label htmlFor="writer-role" className="text-sm font-semibold text-racing-900">
+            I work as
+          </label>
+          <p className="mt-1 text-xs text-racing-800/80">Puts the styles you use most up front.</p>
+          <select
+            id="writer-role"
+            value={role}
+            onChange={(e) => onRoleChange(e.target.value as WriterRole)}
+            className="mt-2 w-full rounded-lg border border-racing-900/15 bg-white px-3 py-2 text-sm focus:border-brass focus:outline-none focus:ring-2 focus:ring-brass"
+          >
+            {ROLE_OPTIONS.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label} — {r.hint}
+              </option>
+            ))}
+          </select>
+        </section>
+
         <section className="rounded-xl border border-racing-900/10 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -72,11 +95,20 @@ export function Settings({ quickMode, onQuickModeChange, savedKey, onRemoveKey, 
               onChange={(e) => onQuickModeChange({ ...quickMode, styleId: e.target.value })}
               className="mt-2 w-full rounded-lg border border-racing-900/15 bg-white px-3 py-2 text-sm focus:border-brass focus:outline-none focus:ring-2 focus:ring-brass"
             >
-              {DEFAULT_STYLE_OPTIONS.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
+              <optgroup label="Tone">
+                {TONE_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Investor &amp; analyst">
+                {BUSINESS_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
         </section>

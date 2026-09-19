@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { compareFigures } from '../../../shared/figures.js'
 import { improveText } from '../services/api.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
-import { replaceActiveFieldText } from '../services/insertText.js'
+import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
+import { PRIMARY_STYLE_IDS, isWriterRole, type WriterRole } from '../services/roles.js'
 import type { QuickModeSettings } from '../types/index.js'
 import { GearIcon } from './components/Icons.js'
 import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
@@ -27,6 +29,9 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [quickMode, setQuickMode] = useState(DEFAULT_QUICK_MODE)
   const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [role, setRole] = useState<WriterRole>('general')
+  // The text the result was generated from, for the figure check.
+  const [sourceForResult, setSourceForResult] = useState('')
 
   // Only the latest request may write results — a slow response for an
   // earlier style must not overwrite the one the user just switched to.
@@ -36,6 +41,8 @@ export function App() {
   const settingsReady = useRef(false)
   const queuedSelection = useRef<string | null>(null)
   const lastSelection = useRef({ text: '', at: 0 })
+  // What was selected on the page, so Replace can swap exactly that text.
+  const pageSelection = useRef('')
 
   const run = useCallback(async (input: string, style: string, custom: string) => {
     if (!input.trim()) return
@@ -45,6 +52,7 @@ export function App() {
     setKeyPrompt(null)
     setNotice(null)
     setResult('')
+    setSourceForResult(input)
     try {
       const res = await improveText({
         text: input,
@@ -76,6 +84,7 @@ export function App() {
       chrome.storage.session.remove('pendingSelection')
 
       const style = quickModeRef.current.styleId
+      pageSelection.current = incoming
       setView('main')
       setText(incoming)
       setFromSelection(true)
@@ -90,7 +99,7 @@ export function App() {
     let cancelled = false
 
     Promise.all([
-      chrome.storage.local.get(['quickMode', 'groqApiKey']),
+      chrome.storage.local.get(['quickMode', 'groqApiKey', 'writerRole']),
       chrome.storage.session.get('pendingSelection'),
     ]).then(([local, session]) => {
       if (cancelled) return
@@ -101,6 +110,7 @@ export function App() {
         setStyleId(saved.styleId)
       }
       setSavedKey(typeof local.groqApiKey === 'string' ? local.groqApiKey : null)
+      if (isWriterRole(local.writerRole)) setRole(local.writerRole)
 
       settingsReady.current = true
       const pending = typeof session.pendingSelection === 'string' ? session.pendingSelection : ''
@@ -138,6 +148,11 @@ export function App() {
     chrome.storage.local.set({ quickMode: next })
   }
 
+  function updateRole(next: WriterRole) {
+    setRole(next)
+    chrome.storage.local.set({ writerRole: next })
+  }
+
   function submit() {
     if (styleId === 'custom' && !customInstruction.trim()) return
     void run(text, styleId, customInstruction)
@@ -171,13 +186,13 @@ export function App() {
       if (!tab?.id) throw new Error('no active tab')
       const [injection] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: replaceActiveFieldText,
-        args: [result],
+        func: replaceSelectionText,
+        args: [result, pageSelection.current],
       })
       setNotice(
-        injection?.result === true
+        injection?.result === 'replaced'
           ? '✓ Replaced in the page.'
-          : "This text can't be edited in place, so it was copied — paste it where you need it.",
+          : "Couldn't edit that text in place, so it was copied — paste it where you need it.",
       )
     } catch {
       setNotice("Couldn't reach this page, so the text was copied instead — paste it where you need it.")
@@ -189,10 +204,14 @@ export function App() {
     setNotice(null)
   }
 
+  const figures = useMemo(() => compareFigures(sourceForResult, result), [sourceForResult, result])
+
   if (view === 'settings') {
     return (
       <div className="mx-auto min-h-screen max-w-md bg-racing-50 px-4 pb-8 pt-4 text-racing-950">
         <Settings
+          role={role}
+          onRoleChange={updateRole}
           quickMode={quickMode}
           onQuickModeChange={updateQuickMode}
           savedKey={savedKey}
@@ -241,6 +260,7 @@ export function App() {
         {hasText && (
           <StylePicker
             value={styleId}
+            primaryIds={PRIMARY_STYLE_IDS[role]}
             onPick={pickStyle}
             customInstruction={customInstruction}
             onCustomChange={setCustomInstruction}
@@ -282,6 +302,8 @@ export function App() {
           <ResultCard
             result={result}
             notice={notice}
+            figures={figures}
+            canReplace={fromSelection && pageSelection.current !== ''}
             onChange={(value) => {
               setResult(value)
               setNotice(null)

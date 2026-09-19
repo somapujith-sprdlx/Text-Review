@@ -8,7 +8,7 @@ describe('GET /api/styles', () => {
 
     const body = await res.json()
     expect(Array.isArray(body.styles)).toBe(true)
-    expect(body.styles.length).toBe(9)
+    expect(body.styles.length).toBe(16)
 
     const ids = body.styles.map((s: { id: string }) => s.id)
     expect(ids).toEqual([
@@ -21,6 +21,13 @@ describe('GET /api/styles', () => {
       'clear-simple',
       'grammar-fix',
       'custom',
+      'exec-summary',
+      'founder-email',
+      'pass-note',
+      'ic-memo',
+      'dd-questions',
+      'action-items',
+      'lp-update',
     ])
   })
 })
