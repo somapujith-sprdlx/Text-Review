@@ -67,7 +67,7 @@ describe('POST /api/improve', () => {
   })
 
   it('returns 429 with LIMIT_REACHED when the shared provider quota is exhausted', async () => {
-    mockedGenerate.mockRejectedValue(new QuotaExhaustedError('All AI providers failed — gemini: 429'))
+    mockedGenerate.mockRejectedValue(new QuotaExhaustedError('All AI providers failed ï¿½ groq: 429'))
 
     const res = await post({ text: 'hello', style: 'formal' })
     expect(res.status).toBe(429)
