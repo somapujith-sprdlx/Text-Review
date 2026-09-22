@@ -11,14 +11,24 @@ export interface ImproveRequest {
   customInstruction?: string
 }
 
+export interface UsageInfo {
+  used: number
+  limit: number
+}
+
 export interface ImproveResponse {
   requestId: string
   style: string
   outputText: string
+  // Absent when the request went straight to Groq with the user's own key —
+  // the shared free allowance only applies to backend-routed requests.
+  usage?: UsageInfo
 }
 
 export interface ImproveErrorResponse {
   error: string
+  code?: string
+  usage?: UsageInfo
 }
 
 export interface SelectionMessage {

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { generateImprovement } from '../services/ai/provider.js'
 import { QuotaExhaustedError } from '../services/ai/errors.js'
+import { getUsageInfo } from '../middleware/usageLimit.js'
 import { STYLES, type StyleId } from './styles.js'
 
 const VALID_STYLE_IDS = new Set(STYLES.map((s) => s.id))
@@ -47,6 +48,7 @@ improveRoute.post('/', async (c) => {
       requestId: randomUUID(),
       style,
       outputText,
+      usage: getUsageInfo(c),
     })
   } catch (err) {
     console.error('generateImprovement failed:', err)

@@ -34,6 +34,8 @@ describe('POST /api/improve', () => {
     expect(body.outputText).toBe('Dear Sir, I would like to request an extension.')
     expect(body.style).toBe('formal')
     expect(typeof body.requestId).toBe('string')
+    expect(body.usage).toMatchObject({ limit: 20 })
+    expect(typeof body.usage.used).toBe('number')
   })
 
   it('rejects text longer than 2000 characters', async () => {

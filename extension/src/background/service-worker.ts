@@ -13,9 +13,21 @@ import { replaceSelectionText } from '../services/insertText.js'
 // Not destructive, just a rare inconsistency — accepted rather than adding
 // synchronous storage access the platform doesn't provide.
 let cachedQuickMode: QuickModeSettings | undefined
+const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: true, styleId: 'improve' }
 
 chrome.storage.local.get('quickMode').then((result) => {
   cachedQuickMode = result.quickMode as QuickModeSettings | undefined
+})
+
+// First run only — an installed user's own choice (including turning Quick
+// Mode off) is never overwritten by this.
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== 'install') return
+  chrome.storage.local.get('quickMode').then((result) => {
+    if (result.quickMode !== undefined) return
+    cachedQuickMode = DEFAULT_QUICK_MODE
+    chrome.storage.local.set({ quickMode: DEFAULT_QUICK_MODE })
+  })
 })
 
 chrome.storage.onChanged.addListener((changes, areaName) => {

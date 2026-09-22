@@ -1,4 +1,5 @@
 import type { ImproveRequest, ImproveResponse, ImproveErrorResponse } from '../types/index.js'
+import { getDeviceId } from './deviceId.js'
 import { LimitReachedError } from './errors.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
@@ -22,9 +23,10 @@ export async function improveText(req: ImproveRequest): Promise<ImproveResponse>
 async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> {
   let res: Response
   try {
+    const deviceId = await getDeviceId()
     res = await fetch(`${BASE_URL}/api/improve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId },
       body: JSON.stringify(req),
     })
   } catch (networkErr) {
@@ -37,13 +39,7 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
   }
 
   if (!res.ok) {
-    // The backend answers 429 both when this client is rate-limited and when
-    // its shared AI providers are out of quota — either way the free
-    // allowance is spent.
-    if (res.status === 429) throw new LimitReachedError()
-
     const bodyText = await res.text().catch(() => '')
-    console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)
     const body = ((): ImproveErrorResponse | null => {
       try {
         return JSON.parse(bodyText)
@@ -51,6 +47,13 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
         return null
       }
     })()
+
+    // The backend answers 429 both when this client is rate-limited and when
+    // its shared AI providers are out of quota — either way the free
+    // allowance is spent.
+    if (res.status === 429) throw new LimitReachedError(body?.usage)
+
+    console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)
     throw new Error(body?.error || GENERIC_ERROR)
   }
 

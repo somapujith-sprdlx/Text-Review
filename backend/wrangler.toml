@@ -1,5 +1,6 @@
 name = "text-review"
 main = "src/index.ts"
+account_id = "af2854d5e1c39fde573717202a1deb36"
 compatibility_date = "2025-09-01"
 # nodejs_compat also makes Workers populate process.env from [vars] and
 # secrets, which the provider code and CORS check read.
@@ -12,6 +13,14 @@ compatibility_flags = ["nodejs_compat"]
 # The ID changes if the unpacked folder moves or the extension is published.
 ALLOWED_ORIGIN = "chrome-extension://gekegjbelncckiijjlbfmemoipdegfng"
 GROQ_MODEL = "openai/gpt-oss-120b"
+# Free requests per device per day before the extension offers the
+# bring-your-own-Groq-key flow.
+FREE_DAILY_LIMIT = "20"
+
+# Persistent per-device usage counters (see src/middleware/usageLimit.ts).
+[[kv_namespaces]]
+binding = "USAGE_KV"
+id = "8bc7f57e71644757ada90868425a8ebe"
 
 [observability]
 enabled = true

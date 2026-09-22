@@ -5,7 +5,7 @@ import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
 import { PRIMARY_STYLE_IDS, isWriterRole, type WriterRole } from '../services/roles.js'
-import type { QuickModeSettings } from '../types/index.js'
+import type { QuickModeSettings, UsageInfo } from '../types/index.js'
 import { GearIcon } from './components/Icons.js'
 import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
 import { ResultCard, ResultSkeleton } from './components/ResultCard.js'
@@ -14,7 +14,7 @@ import { SourceText } from './components/SourceText.js'
 import { StylePicker } from './components/StylePicker.js'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
-const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: false, styleId: 'improve' }
+const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: true, styleId: 'improve' }
 
 export function App() {
   const [view, setView] = useState<'main' | 'settings'>('main')
@@ -30,6 +30,9 @@ export function App() {
   const [quickMode, setQuickMode] = useState(DEFAULT_QUICK_MODE)
   const [savedKey, setSavedKey] = useState<string | null>(null)
   const [role, setRole] = useState<WriterRole>('general')
+  // Known only after the first backend-routed request of the session — null
+  // until then, so the header shows just "Free" rather than a guessed count.
+  const [usage, setUsage] = useState<UsageInfo | null>(null)
   // The text the result was generated from, for the figure check.
   const [sourceForResult, setSourceForResult] = useState('')
 
@@ -59,11 +62,16 @@ export function App() {
         style,
         customInstruction: style === 'custom' ? custom : undefined,
       })
-      if (id === requestId.current) setResult(res.outputText)
+      if (id === requestId.current) {
+        setResult(res.outputText)
+        if (res.usage) setUsage(res.usage)
+      }
     } catch (err) {
       if (id !== requestId.current) return
-      if (err instanceof LimitReachedError) setKeyPrompt('limit')
-      else if (err instanceof InvalidKeyError) setKeyPrompt('invalid')
+      if (err instanceof LimitReachedError) {
+        setKeyPrompt('limit')
+        if (err.usage) setUsage(err.usage)
+      } else if (err instanceof InvalidKeyError) setKeyPrompt('invalid')
       else setError(err instanceof Error ? err.message : GENERIC_ERROR)
     } finally {
       if (id === requestId.current) setLoading(false)
@@ -166,6 +174,7 @@ export function App() {
 
   function handleKeySaved(key: string) {
     setSavedKey(key)
+    setUsage(null)
     if (keyPrompt) {
       // The request that hit the limit can now go through — retry it.
       setKeyPrompt(null)
@@ -229,13 +238,19 @@ export function App() {
   return (
     <div className="mx-auto min-h-screen max-w-md bg-racing-50 px-4 pb-8 pt-4 text-racing-950">
       <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-base font-semibold tracking-tight text-racing-900">Text Enhancer</h1>
+        <h1 className="text-base font-semibold tracking-tight text-racing-900">Lipi - Text Enhancer</h1>
         <div className="flex items-center gap-1.5">
           <span
-            title={savedKey ? 'Requests use your own Groq key' : 'Using the free allowance'}
+            title={
+              savedKey
+                ? 'Requests use your own Groq key'
+                : usage
+                  ? `${Math.max(usage.limit - usage.used, 0)} of ${usage.limit} free requests left today`
+                  : 'Using the free allowance'
+            }
             className="rounded-full bg-racing-900/10 px-2 py-0.5 text-[11px] font-medium text-racing-800"
           >
-            {savedKey ? 'Your Groq key' : 'Free'}
+            {savedKey ? 'Your Groq key' : usage ? `Free · ${usage.used}/${usage.limit} today` : 'Free'}
           </span>
           <button
             type="button"
