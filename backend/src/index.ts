@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { stylesRoute } from './routes/styles.js'
 import { improveRoute } from './routes/improve.js'
+import { usageRoute } from './routes/usage.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import { usageLimit } from './middleware/usageLimit.js'
 
@@ -22,6 +23,7 @@ app.use('/api/improve', usageLimit({ limit: Number(process.env.FREE_DAILY_LIMIT)
 
 app.route('/api/styles', stylesRoute)
 app.route('/api/improve', improveRoute)
+app.route('/api/usage', usageRoute)
 
 // Cloudflare Workers entry. Local Node dev lives in server.ts.
 export default app

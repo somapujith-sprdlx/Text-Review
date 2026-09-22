@@ -1,4 +1,4 @@
-import type { ImproveRequest, ImproveResponse, ImproveErrorResponse } from '../types/index.js'
+import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
 import { getDeviceId } from './deviceId.js'
 import { LimitReachedError } from './errors.js'
 import { improveWithGroqKey } from './groq.js'
@@ -58,4 +58,18 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
   }
 
   return (await res.json()) as ImproveResponse
+}
+
+// Read-only — lets the panel show today's count as soon as it opens. Best
+// effort: a failure here just leaves the badge showing plain "Free".
+export async function fetchUsage(): Promise<UsageInfo | null> {
+  try {
+    const deviceId = await getDeviceId()
+    const res = await fetch(`${BASE_URL}/api/usage`, { headers: { 'X-Device-Id': deviceId } })
+    if (!res.ok) return null
+    const body = (await res.json()) as { usage?: UsageInfo }
+    return body.usage ?? null
+  } catch {
+    return null
+  }
 }

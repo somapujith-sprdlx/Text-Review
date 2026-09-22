@@ -52,9 +52,24 @@ function incrementInMemory(key: string, windowMs: number): number {
   return bucket.count
 }
 
+function peekInMemory(key: string): number {
+  const bucket = memoryBuckets.get(key)
+  return bucket && bucket.resetAt >= Date.now() ? bucket.count : 0
+}
+
 export interface UsageInfo {
   used: number
   limit: number
+}
+
+// Read-only lookup for the panel to show the count on open, without
+// spending a request the way the improve-route middleware below does.
+export async function peekUsage(c: Context, opts: { limit: number; kvBinding: string }): Promise<UsageInfo> {
+  const key = `usage:${usageKeyFor(c)}:${dayKey(new Date())}`
+  const kv = (c.env as Record<string, unknown> | undefined)?.[opts.kvBinding] as KVNamespaceLike | undefined
+
+  const count = kv ? Number((await kv.get(key)) ?? 0) : peekInMemory(key)
+  return { used: Math.min(count, opts.limit), limit: opts.limit }
 }
 
 // Set on the context so the route handler can echo it back in the response

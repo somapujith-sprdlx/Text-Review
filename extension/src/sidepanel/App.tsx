@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { compareFigures } from '../../../shared/figures.js'
-import { improveText } from '../services/api.js'
+import { fetchUsage, improveText } from '../services/api.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
@@ -28,8 +28,9 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [quickMode, setQuickMode] = useState(DEFAULT_QUICK_MODE)
   const [savedKey, setSavedKey] = useState<string | null>(null)
-  // Known only after the first backend-routed request of the session — null
-  // until then, so the header shows just "Free" rather than a guessed count.
+  // Fetched on open (see the mount effect) and refreshed from every
+  // backend-routed response after that. Null until the fetch resolves, so
+  // the header shows plain "Free" for a moment rather than a guessed count.
   const [usage, setUsage] = useState<UsageInfo | null>(null)
   // The text the result was generated from, for the figure check.
   const [sourceForResult, setSourceForResult] = useState('')
@@ -115,7 +116,10 @@ export function App() {
         quickModeRef.current = saved
         setStyleId(saved.styleId)
       }
-      setSavedKey(typeof local.groqApiKey === 'string' ? local.groqApiKey : null)
+      const hasOwnKey = typeof local.groqApiKey === 'string' && local.groqApiKey.length > 0
+      setSavedKey(hasOwnKey ? (local.groqApiKey as string) : null)
+      // Own-key requests never touch the backend, so there's nothing to show.
+      if (!hasOwnKey) void fetchUsage().then((info) => { if (!cancelled) setUsage(info) })
 
       settingsReady.current = true
       const pending = typeof session.pendingSelection === 'string' ? session.pendingSelection : ''

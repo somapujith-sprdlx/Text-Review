@@ -1,2 +1,6 @@
 # Copy to .dev.vars for `npm run dev:worker` (wrangler dev). Gitignored.
 GROQ_API_KEY=your-groq-api-key-here
+# Multiple shared keys instead, comma-separated — takes priority over
+# GROQ_API_KEY when both are set. In production set this with
+# `npx wrangler secret put GROQ_API_KEYS`.
+# GROQ_API_KEYS=key-one,key-two,key-three
