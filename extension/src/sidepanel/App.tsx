@@ -4,7 +4,6 @@ import { improveText } from '../services/api.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
-import { PRIMARY_STYLE_IDS, isWriterRole, type WriterRole } from '../services/roles.js'
 import type { QuickModeSettings, UsageInfo } from '../types/index.js'
 import { GearIcon } from './components/Icons.js'
 import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
@@ -29,7 +28,6 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [quickMode, setQuickMode] = useState(DEFAULT_QUICK_MODE)
   const [savedKey, setSavedKey] = useState<string | null>(null)
-  const [role, setRole] = useState<WriterRole>('general')
   // Known only after the first backend-routed request of the session — null
   // until then, so the header shows just "Free" rather than a guessed count.
   const [usage, setUsage] = useState<UsageInfo | null>(null)
@@ -107,7 +105,7 @@ export function App() {
     let cancelled = false
 
     Promise.all([
-      chrome.storage.local.get(['quickMode', 'groqApiKey', 'writerRole']),
+      chrome.storage.local.get(['quickMode', 'groqApiKey']),
       chrome.storage.session.get('pendingSelection'),
     ]).then(([local, session]) => {
       if (cancelled) return
@@ -118,7 +116,6 @@ export function App() {
         setStyleId(saved.styleId)
       }
       setSavedKey(typeof local.groqApiKey === 'string' ? local.groqApiKey : null)
-      if (isWriterRole(local.writerRole)) setRole(local.writerRole)
 
       settingsReady.current = true
       const pending = typeof session.pendingSelection === 'string' ? session.pendingSelection : ''
@@ -154,11 +151,6 @@ export function App() {
   function updateQuickMode(next: QuickModeSettings) {
     setQuickMode(next)
     chrome.storage.local.set({ quickMode: next })
-  }
-
-  function updateRole(next: WriterRole) {
-    setRole(next)
-    chrome.storage.local.set({ writerRole: next })
   }
 
   function submit() {
@@ -219,8 +211,6 @@ export function App() {
     return (
       <div className="mx-auto min-h-screen max-w-md bg-racing-50 px-4 pb-8 pt-4 text-racing-950">
         <Settings
-          role={role}
-          onRoleChange={updateRole}
           quickMode={quickMode}
           onQuickModeChange={updateQuickMode}
           savedKey={savedKey}
@@ -275,7 +265,6 @@ export function App() {
         {hasText && (
           <StylePicker
             value={styleId}
-            primaryIds={PRIMARY_STYLE_IDS[role]}
             onPick={pickStyle}
             customInstruction={customInstruction}
             onCustomChange={setCustomInstruction}
