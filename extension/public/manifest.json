@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lipi - Text Enhancer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Improve selected text on any webpage using AI-powered writing styles.",
   "permissions": ["sidePanel", "storage", "activeTab", "scripting", "contextMenus"],
   "host_permissions": ["http://*/*", "https://*/*"],

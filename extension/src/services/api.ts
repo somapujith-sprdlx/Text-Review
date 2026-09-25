@@ -3,6 +3,7 @@ import { getDeviceId } from './deviceId.js'
 import { LimitReachedError } from './errors.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
+import { saveUsageCache } from './usageCache.js'
 
 // Set VITE_API_BASE_URL in extension/.env.production to the deployed Worker URL.
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
@@ -51,13 +52,18 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
     // The backend answers 429 both when this client is rate-limited and when
     // its shared AI providers are out of quota — either way the free
     // allowance is spent.
-    if (res.status === 429) throw new LimitReachedError(body?.usage)
+    if (res.status === 429) {
+      if (body?.usage) void saveUsageCache(body.usage)
+      throw new LimitReachedError(body?.usage)
+    }
 
     console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)
     throw new Error(body?.error || GENERIC_ERROR)
   }
 
-  return (await res.json()) as ImproveResponse
+  const data = (await res.json()) as ImproveResponse
+  if (data.usage) void saveUsageCache(data.usage)
+  return data
 }
 
 // Read-only — lets the panel show today's count as soon as it opens. Best
@@ -68,6 +74,7 @@ export async function fetchUsage(): Promise<UsageInfo | null> {
     const res = await fetch(`${BASE_URL}/api/usage`, { headers: { 'X-Device-Id': deviceId } })
     if (!res.ok) return null
     const body = (await res.json()) as { usage?: UsageInfo }
+    if (body.usage) void saveUsageCache(body.usage)
     return body.usage ?? null
   } catch {
     return null

@@ -28,7 +28,7 @@ function offerKeySetup(button: HTMLButtonElement, reason: 'limit' | 'key') {
   button.style.background = '#C6A15B'
   button.style.color = '#07281E'
   button.textContent =
-    reason === 'limit' ? '🔑 Free limit reached — add your Groq key' : '🔑 Groq key rejected — add a new one'
+    reason === 'limit' ? '🔑 Limit reached today — add your Groq key' : '🔑 Groq key rejected — add a new one'
   setTimeout(() => {
     if (floatingButton === button && buttonMode === 'setup') removeFloatingButton()
   }, 10_000)

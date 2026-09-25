@@ -42,6 +42,7 @@ export function App() {
   quickModeRef.current = quickMode
   const settingsReady = useRef(false)
   const queuedSelection = useRef<string | null>(null)
+  const queuedLimitReached = useRef(false)
   const lastSelection = useRef({ text: '', at: 0 })
   // What was selected on the page, so Replace can swap exactly that text.
   const pageSelection = useRef('')
@@ -80,7 +81,7 @@ export function App() {
   // A new page selection replaces whatever is on screen and is improved right
   // away in the default style — that's the whole point of selecting it.
   const takeSelection = useCallback(
-    (incoming: string) => {
+    (incoming: string, limitReached = false) => {
       // The mount-time read and the storage-change event can both deliver the
       // same selection; only act on it once.
       const now = Date.now()
@@ -88,7 +89,7 @@ export function App() {
       lastSelection.current = { text: incoming, at: now }
 
       // Consume it, so reopening the panel later doesn't replay a stale selection.
-      chrome.storage.session.remove('pendingSelection')
+      chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached'])
 
       const style = quickModeRef.current.styleId
       pageSelection.current = incoming
@@ -97,7 +98,16 @@ export function App() {
       setFromSelection(true)
       setStyleId(style)
       setCustomInstruction('')
-      void run(incoming, style, '')
+      if (limitReached) {
+        // The background already knows today's free limit is used up —
+        // go straight to the key prompt instead of running (and failing) a request.
+        setResult('')
+        setError(null)
+        setNotice(null)
+        setKeyPrompt('limit')
+      } else {
+        void run(incoming, style, '')
+      }
     },
     [run],
   )
@@ -107,7 +117,7 @@ export function App() {
 
     Promise.all([
       chrome.storage.local.get(['quickMode', 'groqApiKey']),
-      chrome.storage.session.get('pendingSelection'),
+      chrome.storage.session.get(['pendingSelection', 'pendingLimitReached']),
     ]).then(([local, session]) => {
       if (cancelled) return
       const saved = local.quickMode as QuickModeSettings | undefined
@@ -123,9 +133,12 @@ export function App() {
 
       settingsReady.current = true
       const pending = typeof session.pendingSelection === 'string' ? session.pendingSelection : ''
+      const limitReached = session.pendingLimitReached === true
       const incoming = pending || queuedSelection.current
+      const incomingLimitReached = pending ? limitReached : queuedLimitReached.current
       queuedSelection.current = null
-      if (incoming) takeSelection(incoming)
+      queuedLimitReached.current = false
+      if (incoming) takeSelection(incoming, incomingLimitReached)
     })
 
     // The panel can finish opening before the service worker's storage write
@@ -135,8 +148,12 @@ export function App() {
       if (area === 'session') {
         const incoming = changes.pendingSelection?.newValue
         if (typeof incoming === 'string' && incoming) {
-          if (settingsReady.current) takeSelection(incoming)
-          else queuedSelection.current = incoming
+          const limitReached = changes.pendingLimitReached?.newValue === true
+          if (settingsReady.current) takeSelection(incoming, limitReached)
+          else {
+            queuedSelection.current = incoming
+            queuedLimitReached.current = limitReached
+          }
         }
       }
       if (area === 'local' && changes.groqApiKey) {

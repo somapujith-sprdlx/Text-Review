@@ -13,8 +13,8 @@ interface Props {
 
 const COPY: Record<KeyPromptReason, { title: string; body: string }> = {
   limit: {
-    title: 'Free limit reached',
-    body: "You've used the free allowance for now. Add your own free Groq key to keep going — it takes about a minute.",
+    title: "You've reached your limit for today",
+    body: 'Add your own free Groq key to keep improving text today — with no daily limit. It takes about a minute.',
   },
   invalid: {
     title: 'Groq key rejected',
