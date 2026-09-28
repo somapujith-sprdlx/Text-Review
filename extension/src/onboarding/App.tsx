@@ -1,10 +1,49 @@
+import { useEffect, useState } from 'react'
+
 // Fresh-install onboarding tab. Opened once by the service worker via
 // chrome.runtime.onInstalled (reason === 'install'); see
 // src/background/service-worker.ts. Fully self-contained — no shared state
 // with the side panel. The guided tour that continues onboarding lives in
-// the side panel itself and is wired up separately.
+// the side panel itself (Tour.tsx) and triggers on its own once the panel
+// opens (App.tsx checks onboardingCompleted on mount) — this page's only
+// job is to open that panel for them, so they see it exists at all.
 
 function App() {
+  // Fetched once on mount (not awaited inside the click handler) so
+  // Continue can call chrome.sidePanel.open() synchronously within the
+  // click's user gesture — an await first would make it silently no-op,
+  // same constraint already documented in service-worker.ts.
+  const [tabId, setTabId] = useState<number | undefined>(undefined)
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    chrome.tabs.getCurrent().then((tab) => setTabId(tab?.id))
+  }, [])
+
+  function handleContinue() {
+    // No API tells an extension when a user actually clicks the pin icon —
+    // this is the closest real signal (they've seen the instructions and
+    // moved on), so it's what triggers the side panel opening.
+    if (tabId !== undefined) {
+      chrome.sidePanel.open({ tabId }).catch(() => {})
+    }
+    setDone(true)
+  }
+
+  if (done) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-racing-50 px-6 py-10">
+        <div className="w-full max-w-xl rounded-xl border border-racing-900/10 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-2xl font-semibold tracking-tight text-racing-900">You&rsquo;re all set 🎉</h1>
+          <p className="mt-2 text-sm leading-relaxed text-racing-800/85">
+            The Lipi panel just opened alongside this tab — that&rsquo;s where your quick tour continues. You can
+            close this tab any time.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-racing-50 px-6 py-10">
       <div className="w-full max-w-xl rounded-xl border border-racing-900/10 bg-white p-8 shadow-sm">
@@ -19,7 +58,7 @@ function App() {
 
         <button
           type="button"
-          onClick={() => window.close()}
+          onClick={handleContinue}
           className="mt-8 w-full rounded-lg bg-racing-900 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-racing-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brass focus-visible:ring-offset-2 focus-visible:ring-offset-white"
         >
           Continue
