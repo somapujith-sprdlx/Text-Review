@@ -14,3 +14,13 @@ export class InvalidKeyError extends Error {
     super('Your Groq API key was rejected.')
   }
 }
+
+// Backend-side backstop for the rating gate (see middleware/ratingGate.ts).
+// Primary enforcement is client-side (App.tsx checks cached device state
+// before this could ever fire) — this only surfaces if that check was
+// somehow bypassed, so the UI still has something sane to fall back to.
+export class RatingRequiredError extends Error {
+  constructor() {
+    super('Please rate Lipi to keep using it.')
+  }
+}

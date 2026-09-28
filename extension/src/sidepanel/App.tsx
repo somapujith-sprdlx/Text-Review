@@ -1,19 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { compareFigures } from '../../../shared/figures.js'
 import { fetchUsage, improveText } from '../services/api.js'
+import { completeOnboarding, fetchDeviceState } from '../services/deviceState.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
-import type { QuickModeSettings, UsageInfo } from '../types/index.js'
+import type { DeviceState, QuickModeSettings, UsageInfo } from '../types/index.js'
 import { GearIcon } from './components/Icons.js'
 import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
+import { RateGate } from './components/RateGate.js'
 import { ResultCard, ResultSkeleton } from './components/ResultCard.js'
 import { Settings } from './components/Settings.js'
 import { SourceText } from './components/SourceText.js'
 import { StylePicker } from './components/StylePicker.js'
+import { Tour } from './components/Tour.js'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
 const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: true, styleId: 'improve' }
+// Canned example used only while the guided tour is active, so the style
+// picker and result card have something real to spotlight without spending
+// an actual AI request. Restored to whatever was there before once the tour
+// ends (see startTour/endTour).
+const TOUR_DEMO_TEXT = 'hey can u send that file today'
+const TOUR_DEMO_RESULT = 'Could you please send the file today?'
 
 export function App() {
   const [view, setView] = useState<'main' | 'settings'>('main')
@@ -34,6 +43,13 @@ export function App() {
   const [usage, setUsage] = useState<UsageInfo | null>(null)
   // The text the result was generated from, for the figure check.
   const [sourceForResult, setSourceForResult] = useState('')
+  // Covers both free-tier and BYOK usage (see services/deviceState.ts) —
+  // null/false until the mount effect resolves, same "don't guess" reasoning
+  // as usage above. onboardingCompleted null = not known yet, so the tour
+  // doesn't flash on before we're sure it's actually needed.
+  const [ratingRequired, setRatingRequired] = useState(false)
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null)
+  const [showTour, setShowTour] = useState(false)
 
   // Only the latest request may write results — a slow response for an
   // earlier style must not overwrite the one the user just switched to.
@@ -43,9 +59,21 @@ export function App() {
   const settingsReady = useRef(false)
   const queuedSelection = useRef<string | null>(null)
   const queuedLimitReached = useRef(false)
+  const queuedRatingRequired = useRef(false)
   const lastSelection = useRef({ text: '', at: 0 })
   // What was selected on the page, so Replace can swap exactly that text.
   const pageSelection = useRef('')
+  // Snapshot of real state taken right before the tour overwrites it with
+  // the canned demo, restored when the tour ends.
+  const preTourState = useRef<{ text: string; result: string; fromSelection: boolean; sourceForResult: string } | null>(
+    null,
+  )
+  const tourStarted = useRef(false)
+
+  function applyDeviceState(state: DeviceState) {
+    setRatingRequired(state.ratingRequired)
+    setOnboardingCompleted(state.onboardingCompleted)
+  }
 
   const run = useCallback(async (input: string, style: string, custom: string) => {
     if (!input.trim()) return
@@ -81,7 +109,7 @@ export function App() {
   // A new page selection replaces whatever is on screen and is improved right
   // away in the default style — that's the whole point of selecting it.
   const takeSelection = useCallback(
-    (incoming: string, limitReached = false) => {
+    (incoming: string, limitReached = false, ratingGateHit = false) => {
       // The mount-time read and the storage-change event can both deliver the
       // same selection; only act on it once.
       const now = Date.now()
@@ -89,7 +117,7 @@ export function App() {
       lastSelection.current = { text: incoming, at: now }
 
       // Consume it, so reopening the panel later doesn't replay a stale selection.
-      chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached'])
+      chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired'])
 
       const style = quickModeRef.current.styleId
       pageSelection.current = incoming
@@ -98,7 +126,14 @@ export function App() {
       setFromSelection(true)
       setStyleId(style)
       setCustomInstruction('')
-      if (limitReached) {
+      if (ratingGateHit) {
+        // The background already knows the gate is up — surface RateGate
+        // (via the render below) instead of attempting a doomed request.
+        setResult('')
+        setError(null)
+        setNotice(null)
+        setRatingRequired(true)
+      } else if (limitReached) {
         // The background already knows today's free limit is used up —
         // go straight to the key prompt instead of running (and failing) a request.
         setResult('')
@@ -116,8 +151,8 @@ export function App() {
     let cancelled = false
 
     Promise.all([
-      chrome.storage.local.get(['quickMode', 'groqApiKey']),
-      chrome.storage.session.get(['pendingSelection', 'pendingLimitReached']),
+      chrome.storage.local.get(['quickMode', 'groqApiKey', 'deviceStateCache']),
+      chrome.storage.session.get(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired']),
     ]).then(([local, session]) => {
       if (cancelled) return
       const saved = local.quickMode as QuickModeSettings | undefined
@@ -131,14 +166,26 @@ export function App() {
       // Own-key requests never touch the backend, so there's nothing to show.
       if (!hasOwnKey) void fetchUsage().then((info) => { if (!cancelled) setUsage(info) })
 
+      // Cached read first (avoids a flash of the normal UI before we know
+      // the gate/tour status), then a fresh fetch to reconcile — same
+      // pattern as usage above, applied to device state instead.
+      const cachedState = local.deviceStateCache as DeviceState | undefined
+      if (cachedState) applyDeviceState(cachedState)
+      void fetchDeviceState().then((state) => {
+        if (!cancelled && state) applyDeviceState(state)
+      })
+
       settingsReady.current = true
       const pending = typeof session.pendingSelection === 'string' ? session.pendingSelection : ''
       const limitReached = session.pendingLimitReached === true
+      const ratingGateHit = session.pendingRatingRequired === true
       const incoming = pending || queuedSelection.current
       const incomingLimitReached = pending ? limitReached : queuedLimitReached.current
+      const incomingRatingGateHit = pending ? ratingGateHit : queuedRatingRequired.current
       queuedSelection.current = null
       queuedLimitReached.current = false
-      if (incoming) takeSelection(incoming, incomingLimitReached)
+      queuedRatingRequired.current = false
+      if (incoming) takeSelection(incoming, incomingLimitReached, incomingRatingGateHit)
     })
 
     // The panel can finish opening before the service worker's storage write
@@ -149,16 +196,26 @@ export function App() {
         const incoming = changes.pendingSelection?.newValue
         if (typeof incoming === 'string' && incoming) {
           const limitReached = changes.pendingLimitReached?.newValue === true
-          if (settingsReady.current) takeSelection(incoming, limitReached)
+          const ratingGateHit = changes.pendingRatingRequired?.newValue === true
+          if (settingsReady.current) takeSelection(incoming, limitReached, ratingGateHit)
           else {
             queuedSelection.current = incoming
             queuedLimitReached.current = limitReached
+            queuedRatingRequired.current = ratingGateHit
           }
         }
       }
       if (area === 'local' && changes.groqApiKey) {
         const next = changes.groqApiKey.newValue
         setSavedKey(typeof next === 'string' ? next : null)
+      }
+      // Covers every place device state changes — App.tsx's own fetches
+      // below, RateGate's claim, and the fire-and-forget increment inside
+      // improveText() (api.ts), including for Quick Mode requests handled
+      // entirely in the service worker.
+      if (area === 'local' && changes.deviceStateCache) {
+        const next = changes.deviceStateCache.newValue as DeviceState | undefined
+        if (next) applyDeviceState(next)
       }
     }
     chrome.storage.onChanged.addListener(handleStorageChange)
@@ -168,6 +225,39 @@ export function App() {
       chrome.storage.onChanged.removeListener(handleStorageChange)
     }
   }, [takeSelection])
+
+  // First panel open after install (onboardingCompleted === false, fetched
+  // above) — take over with the guided tour once, using a canned example so
+  // every step has something real to spotlight without an AI call.
+  useEffect(() => {
+    if (onboardingCompleted !== false || tourStarted.current) return
+    tourStarted.current = true
+    preTourState.current = { text, result, fromSelection, sourceForResult }
+    setText(TOUR_DEMO_TEXT)
+    setFromSelection(false)
+    setResult(TOUR_DEMO_RESULT)
+    setSourceForResult(TOUR_DEMO_TEXT)
+    setShowTour(true)
+    // Deliberately not depending on text/result/etc. — this must only ever
+    // run once, gated by tourStarted, not re-run when those change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onboardingCompleted])
+
+  function endTour() {
+    setShowTour(false)
+    const prev = preTourState.current
+    if (prev) {
+      setText(prev.text)
+      setResult(prev.result)
+      setFromSelection(prev.fromSelection)
+      setSourceForResult(prev.sourceForResult)
+    }
+    preTourState.current = null
+    setOnboardingCompleted(true)
+    void completeOnboarding().then((state) => {
+      if (state) applyDeviceState(state)
+    })
+  }
 
   function updateQuickMode(next: QuickModeSettings) {
     setQuickMode(next)
@@ -200,6 +290,10 @@ export function App() {
     setSavedKey(null)
   }
 
+  function handleRatingClaimed(state: DeviceState) {
+    applyDeviceState(state)
+  }
+
   async function handleReplace() {
     // Always copy too, so nothing is lost if the page has no editable field.
     await navigator.clipboard.writeText(result).catch(() => undefined)
@@ -227,6 +321,12 @@ export function App() {
   }
 
   const figures = useMemo(() => compareFigures(sourceForResult, result), [sourceForResult, result])
+
+  // Takes over the whole panel, including Settings — a hard gate, not just
+  // a nudge on the main flow. See services/deviceState.ts / RateGate.tsx.
+  if (ratingRequired) {
+    return <RateGate onClaimed={handleRatingClaimed} />
+  }
 
   if (view === 'settings') {
     return (
@@ -265,6 +365,7 @@ export function App() {
           </span>
           <button
             type="button"
+            id="tour-settings"
             onClick={() => setView('settings')}
             aria-label="Settings"
             title="Settings"
@@ -276,21 +377,25 @@ export function App() {
       </header>
 
       <main className="space-y-4">
-        <SourceText
-          text={text}
-          onChange={setText}
-          fromSelection={fromSelection}
-          onCommit={submit}
-        />
+        <div id="tour-source-text">
+          <SourceText
+            text={text}
+            onChange={setText}
+            fromSelection={fromSelection}
+            onCommit={submit}
+          />
+        </div>
 
         {hasText && (
-          <StylePicker
-            value={styleId}
-            onPick={pickStyle}
-            customInstruction={customInstruction}
-            onCustomChange={setCustomInstruction}
-            onCustomApply={submit}
-          />
+          <div id="tour-style-picker">
+            <StylePicker
+              value={styleId}
+              onPick={pickStyle}
+              customInstruction={customInstruction}
+              onCustomChange={setCustomInstruction}
+              onCustomApply={submit}
+            />
+          </div>
         )}
 
         {hasText && !hasRun && styleId !== 'custom' && (
@@ -324,21 +429,25 @@ export function App() {
         {keyPrompt && !loading && <KeySetup reason={keyPrompt} onSaved={handleKeySaved} />}
 
         {result && !loading && (
-          <ResultCard
-            result={result}
-            notice={notice}
-            figures={figures}
-            canReplace={fromSelection && pageSelection.current !== ''}
-            onChange={(value) => {
-              setResult(value)
-              setNotice(null)
-            }}
-            onReplace={handleReplace}
-            onCopy={handleCopy}
-            onRetry={submit}
-          />
+          <div id="tour-result-card">
+            <ResultCard
+              result={result}
+              notice={notice}
+              figures={figures}
+              canReplace={fromSelection && pageSelection.current !== ''}
+              onChange={(value) => {
+                setResult(value)
+                setNotice(null)
+              }}
+              onReplace={handleReplace}
+              onCopy={handleCopy}
+              onRetry={submit}
+            />
+          </div>
         )}
       </main>
+
+      {showTour && <Tour onFinish={endTour} />}
     </div>
   )
 }

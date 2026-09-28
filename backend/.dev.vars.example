@@ -4,3 +4,8 @@ GROQ_API_KEY=your-groq-api-key-here
 # GROQ_API_KEY when both are set. In production set this with
 # `npx wrangler secret put GROQ_API_KEYS`.
 # GROQ_API_KEYS=key-one,key-two,key-three
+
+# Neon Postgres connection string, for onboarding/rating-gate device state.
+# Omit it and those features fail open rather than crash. In production set
+# this with `npx wrangler secret put DATABASE_URL`.
+DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require

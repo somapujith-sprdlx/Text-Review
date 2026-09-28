@@ -1,4 +1,5 @@
 import type { Context, Next } from 'hono'
+import { getDeviceId } from '../lib/deviceId.js'
 
 interface Bucket {
   count: number
@@ -24,8 +25,8 @@ function dayKey(now: Date): string {
 // without one (non-extension clients, or the header stripped) fall back to
 // IP so the endpoint still can't be hammered for free.
 function usageKeyFor(c: Context): string {
-  const deviceId = c.req.header('x-device-id')
-  if (deviceId && /^[a-zA-Z0-9-]{8,64}$/.test(deviceId)) return `device:${deviceId}`
+  const deviceId = getDeviceId(c)
+  if (deviceId) return `device:${deviceId}`
   const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
   return `ip:${ip}`
 }

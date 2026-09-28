@@ -12,6 +12,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         sidepanel: resolve(__dirname, 'sidepanel.html'),
+        onboarding: resolve(__dirname, 'onboarding.html'),
         'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
         content: resolve(__dirname, 'src/content/selection.ts'),
       },

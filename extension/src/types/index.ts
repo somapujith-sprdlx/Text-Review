@@ -49,3 +49,16 @@ export interface QuickModeSettings {
   enabled: boolean
   styleId: string
 }
+
+// Server-side, per-device state from /api/device-state — covers both
+// free-tier and BYOK usage, since BYOK never otherwise touches the backend.
+export interface DeviceState {
+  lifetimeImprovements: number
+  ratingRequired: boolean
+  onboardingCompleted: boolean
+  // Whether this device has linked a verified Google account at the rating
+  // gate — see services/googleAuth.ts and RateGate.tsx. Ties gate state to
+  // an account instead of the resettable device id once true.
+  googleLinked: boolean
+  email: string | null
+}

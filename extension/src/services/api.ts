@@ -1,27 +1,29 @@
 import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
+import { BASE_URL } from './config.js'
 import { getDeviceId } from './deviceId.js'
-import { LimitReachedError } from './errors.js'
+import { reportImprovementCompleted } from './deviceState.js'
+import { LimitReachedError, RatingRequiredError } from './errors.js'
 import { fetchWithTimeout } from './fetchWithTimeout.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
 import { saveUsageCache } from './usageCache.js'
-
-// Set VITE_API_BASE_URL in extension/.env.production to the deployed Worker URL.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
 const IMPROVE_TIMEOUT_MS = 25_000
 const USAGE_TIMEOUT_MS = 10_000
 
 // A saved Groq key always wins: the request goes straight to Groq and never
-// spends the shared free allowance.
+// spends the shared free allowance. Either path is reported to
+// /api/device-state/increment afterward — the only place both funnel
+// through — so the lifetime-improvement count (and rating gate) covers BYOK
+// too, even though BYOK requests otherwise never touch this backend.
 export async function improveText(req: ImproveRequest): Promise<ImproveResponse> {
   const apiKey = await getGroqKey()
-  if (apiKey) {
-    const outputText = await improveWithGroqKey(apiKey, req)
-    return { requestId: crypto.randomUUID(), style: req.style, outputText }
-  }
-  return improveViaBackend(req)
+  const result = apiKey
+    ? { requestId: crypto.randomUUID(), style: req.style, outputText: await improveWithGroqKey(apiKey, req) }
+    : await improveViaBackend(req)
+  void reportImprovementCompleted()
+  return result
 }
 
 async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> {
@@ -62,6 +64,13 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
     if (res.status === 429) {
       if (body?.usage) void saveUsageCache(body.usage)
       throw new LimitReachedError(body?.usage)
+    }
+
+    // Backstop only — App.tsx checks cached device state before a request
+    // can even be attempted, so this should rarely fire in normal use. See
+    // middleware/ratingGate.ts.
+    if (res.status === 403 && body?.code === 'RATING_REQUIRED') {
+      throw new RatingRequiredError()
     }
 
     console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)

@@ -1,5 +1,5 @@
 export default {
-  content: ['./src/**/*.{ts,tsx}', './public/**/*.html'],
+  content: ['./*.html', './src/**/*.{ts,tsx}', './public/**/*.html'],
   theme: {
     extend: {
       colors: {
@@ -17,6 +17,15 @@ export default {
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+      },
+      keyframes: {
+        'tour-fade': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+      },
+      animation: {
+        'tour-fade': 'tour-fade 150ms ease-out',
       },
     },
   },

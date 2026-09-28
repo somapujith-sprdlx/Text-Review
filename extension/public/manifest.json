@@ -3,8 +3,12 @@
   "name": "Lipi - Text Enhancer",
   "version": "1.0.1",
   "description": "Improve selected text on any webpage using AI-powered writing styles.",
-  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "contextMenus"],
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "contextMenus", "identity"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "oauth2": {
+    "client_id": "181673445954-hs05fh3b3em56dmluj9j3kkgtjpfbjur.apps.googleusercontent.com",
+    "scopes": ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+  },
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
