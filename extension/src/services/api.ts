@@ -1,6 +1,7 @@
 import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
 import { getDeviceId } from './deviceId.js'
 import { LimitReachedError } from './errors.js'
+import { fetchWithTimeout } from './fetchWithTimeout.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
 import { saveUsageCache } from './usageCache.js'
@@ -9,6 +10,8 @@ import { saveUsageCache } from './usageCache.js'
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
+const IMPROVE_TIMEOUT_MS = 25_000
+const USAGE_TIMEOUT_MS = 10_000
 
 // A saved Groq key always wins: the request goes straight to Groq and never
 // spends the shared free allowance.
@@ -25,11 +28,15 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
   let res: Response
   try {
     const deviceId = await getDeviceId()
-    res = await fetch(`${BASE_URL}/api/improve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId },
-      body: JSON.stringify(req),
-    })
+    res = await fetchWithTimeout(
+      `${BASE_URL}/api/improve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId },
+        body: JSON.stringify(req),
+      },
+      IMPROVE_TIMEOUT_MS,
+    )
   } catch (networkErr) {
     console.error('Text Quality Enhancer: fetch to /api/improve threw', networkErr)
     // Preserve the real cause (network failure, CORS rejection, etc.) on
@@ -71,7 +78,11 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
 export async function fetchUsage(): Promise<UsageInfo | null> {
   try {
     const deviceId = await getDeviceId()
-    const res = await fetch(`${BASE_URL}/api/usage`, { headers: { 'X-Device-Id': deviceId } })
+    const res = await fetchWithTimeout(
+      `${BASE_URL}/api/usage`,
+      { headers: { 'X-Device-Id': deviceId } },
+      USAGE_TIMEOUT_MS,
+    )
     if (!res.ok) return null
     const body = (await res.json()) as { usage?: UsageInfo }
     if (body.usage) void saveUsageCache(body.usage)

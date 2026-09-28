@@ -4,6 +4,13 @@ let floatingButton: HTMLButtonElement | null = null
 let isProcessing = false
 // 'setup' = Quick Mode hit the free limit and the button now leads to the Groq-key setup.
 let buttonMode: 'improve' | 'setup' = 'improve'
+// isProcessing blocks the button from ever being dismissed, so if the
+// service worker's QUICK_IMPROVE_DONE message never arrives — e.g. Chrome
+// killed the MV3 service worker mid-request, which it can do with no
+// warning — the button would otherwise be stuck on "Improving…" forever.
+// This is the backstop; the normal path clears it long before it fires.
+const processingTimeouts = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>()
+const PROCESSING_TIMEOUT_MS = 35_000
 
 function removeFloatingButton() {
   if (isProcessing) return
@@ -17,9 +24,30 @@ function setButtonProcessing(button: HTMLButtonElement) {
   button.style.cursor = 'wait'
   button.style.opacity = '0.85'
   button.textContent = '⏳ Improving…'
+
+  const timeoutId = setTimeout(() => {
+    isProcessing = false
+    button.textContent = '⚠️ Timed out — try again'
+    button.style.background = '#B91C1C'
+    button.style.opacity = '1'
+    setTimeout(() => {
+      button.remove()
+      if (floatingButton === button) floatingButton = null
+    }, 1600)
+  }, PROCESSING_TIMEOUT_MS)
+  processingTimeouts.set(button, timeoutId)
+}
+
+function clearProcessingTimeout(button: HTMLButtonElement) {
+  const timeoutId = processingTimeouts.get(button)
+  if (timeoutId !== undefined) {
+    clearTimeout(timeoutId)
+    processingTimeouts.delete(button)
+  }
 }
 
 function offerKeySetup(button: HTMLButtonElement, reason: 'limit' | 'key') {
+  clearProcessingTimeout(button)
   isProcessing = false
   buttonMode = 'setup'
   button.disabled = false
@@ -35,6 +63,7 @@ function offerKeySetup(button: HTMLButtonElement, reason: 'limit' | 'key') {
 }
 
 function flashButtonError(button: HTMLButtonElement) {
+  clearProcessingTimeout(button)
   button.textContent = '⚠️ Failed — try again'
   button.style.background = '#B91C1C'
   setTimeout(() => {
@@ -101,6 +130,7 @@ chrome.runtime.onMessage.addListener((message: QuickImproveDoneMessage) => {
   if (!floatingButton) return
 
   if (message.ok) {
+    clearProcessingTimeout(floatingButton)
     isProcessing = false
     removeFloatingButton()
   } else if (message.reason === 'limit' || message.reason === 'key') {

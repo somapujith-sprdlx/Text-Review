@@ -2,6 +2,7 @@ import { buildPrompt } from '../../../shared/prompts.js'
 import { STYLES, type StyleId } from '../../../shared/styles.js'
 import type { ImproveRequest } from '../types/index.js'
 import { InvalidKeyError } from './errors.js'
+import { fetchWithTimeout } from './fetchWithTimeout.js'
 
 // Extension pages and the service worker are exempt from CORS for hosts in
 // host_permissions, so these calls go straight from the browser to Groq —
@@ -10,6 +11,11 @@ const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const GROQ_MODEL = 'openai/gpt-oss-120b'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
+const VALIDATE_TIMEOUT_MS = 10_000
+// gpt-oss-120b is a reasoning model and can take a while, but this still
+// needs to abort well under the ~30s a Quick Mode click can tolerate before
+// its own safety net gives up on the floating button (see content/selection.ts).
+const IMPROVE_TIMEOUT_MS = 25_000
 
 interface GroqChatResponse {
   choices?: Array<{ message?: { content?: string } }>
@@ -20,7 +26,11 @@ interface GroqChatResponse {
 export async function validateGroqKey(apiKey: string): Promise<boolean> {
   let res: Response
   try {
-    res = await fetch(`${GROQ_BASE}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
+    res = await fetchWithTimeout(
+      `${GROQ_BASE}/models`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+      VALIDATE_TIMEOUT_MS,
+    )
   } catch (cause) {
     throw new Error("Couldn't reach Groq. Check your connection and try again.", { cause })
   }
@@ -37,18 +47,22 @@ export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): P
 
   let res: Response
   try {
-    res = await fetch(`${GROQ_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        temperature: 0.7,
-      }),
-    })
+    res = await fetchWithTimeout(
+      `${GROQ_BASE}/chat/completions`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          temperature: 0.7,
+        }),
+      },
+      IMPROVE_TIMEOUT_MS,
+    )
   } catch (cause) {
     throw new Error(GENERIC_ERROR, { cause })
   }
