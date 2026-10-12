@@ -43,7 +43,7 @@ export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): P
   if (!STYLES.some((s) => s.id === req.style)) {
     throw new Error('Unknown style.')
   }
-  const { system, user } = buildPrompt(req.style as StyleId, req.text, req.customInstruction)
+  const { system, user } = buildPrompt(req.style as StyleId, req.text, req.customInstruction, req.profile)
 
   let res: Response
   try {

@@ -2,16 +2,18 @@ import { buildPrompt } from './prompts.js'
 import { callGroq } from './providers/groq.js'
 import type { StyleId } from '../../routes/styles.js'
 import { ProviderHttpError, QuotaExhaustedError } from './errors.js'
+import type { WritingProfile } from '../../../../shared/profile.js'
 
 export interface GenerateImprovementInput {
   text: string
   style: StyleId
   language?: string
   customInstruction?: string
+  profile?: WritingProfile
 }
 
 export async function generateImprovement(input: GenerateImprovementInput): Promise<string> {
-  const { system, user } = buildPrompt(input.style, input.text, input.customInstruction)
+  const { system, user } = buildPrompt(input.style, input.text, input.customInstruction, input.profile)
 
   try {
     return await callGroq(system, user)

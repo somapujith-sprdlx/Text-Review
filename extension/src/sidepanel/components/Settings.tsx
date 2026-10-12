@@ -4,6 +4,7 @@ import { maskKey } from '../../services/keyStore.js'
 import type { QuickModeSettings } from '../../types/index.js'
 import { ArrowLeftIcon } from './Icons.js'
 import { KeySetup } from './KeySetup.js'
+import { Personalization } from './Personalization.js'
 
 interface Props {
   quickMode: QuickModeSettings
@@ -80,6 +81,8 @@ export function Settings({ quickMode, onQuickModeChange, savedKey, onRemoveKey, 
             </select>
           </div>
         </section>
+
+        <Personalization />
 
         {addingKey ? (
           <KeySetup

@@ -1,4 +1,5 @@
 // Shared by the backend and the extension — keep this file dependency-free.
+import { profileToPromptLines, type WritingProfile } from './profile.js'
 import type { StyleId } from './styles.js'
 
 const STYLE_INSTRUCTIONS: Record<StyleId, string> = {
@@ -25,6 +26,7 @@ export function buildPrompt(
   style: StyleId,
   text: string,
   customInstruction?: string,
+  profile?: WritingProfile,
 ): { system: string; user: string } {
   const task = STYLE_INSTRUCTIONS[style]
   const customBlock =
@@ -32,10 +34,20 @@ export function buildPrompt(
       ? `\n\nCUSTOM INSTRUCTION:\n${customInstruction}`
       : ''
 
+  // Grammar-fix is explicitly "change nothing but errors", so personal tone
+  // and length preferences have no business in that prompt.
+  const preferenceLines = profile && style !== 'grammar-fix' ? profileToPromptLines(profile) : []
+  const preferenceBlock =
+    preferenceLines.length > 0
+      ? `\n\nWRITER'S PREFERENCES (follow these where they do not conflict with the task above):\n${preferenceLines
+          .map((line) => `- ${line}`)
+          .join('\n')}`
+      : ''
+
   const system = `You are a professional writing assistant.
 
 TASK:
-${task}${customBlock}
+${task}${customBlock}${preferenceBlock}
 
 ${BASE_RULES}`
 

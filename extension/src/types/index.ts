@@ -1,3 +1,5 @@
+import type { WritingProfile } from '../../../shared/profile.js'
+
 export interface StyleOption {
   id: string
   label: string
@@ -9,6 +11,9 @@ export interface ImproveRequest {
   style: string
   language?: string
   customInstruction?: string
+  // The signed-in user's saved writing preferences. Attached by improveText()
+  // itself (from the local cache), not by callers.
+  profile?: WritingProfile
 }
 
 export interface UsageInfo {

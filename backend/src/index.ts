@@ -4,6 +4,7 @@ import { stylesRoute } from './routes/styles.js'
 import { improveRoute } from './routes/improve.js'
 import { usageRoute } from './routes/usage.js'
 import { deviceStateRoute } from './routes/deviceState.js'
+import { profileRoute } from './routes/profile.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import { usageLimit } from './middleware/usageLimit.js'
 import { ratingGate } from './middleware/ratingGate.js'
@@ -28,10 +29,16 @@ app.use('/api/improve', googleRequired)
 app.use('/api/improve', usageLimit({ limit: Number(process.env.FREE_DAILY_LIMIT) || 20, kvBinding: 'USAGE_KV' }))
 app.use('/api/improve', ratingGate)
 
+// The writing profile belongs to a Google account (keyed on the verified sub),
+// so it's refused for device-only callers the same way /api/improve is.
+app.use('/api/profile', rateLimit({ limit: 30, windowMs: 60_000 }))
+app.use('/api/profile', googleRequired)
+
 app.route('/api/styles', stylesRoute)
 app.route('/api/improve', improveRoute)
 app.route('/api/usage', usageRoute)
 app.route('/api/device-state', deviceStateRoute)
+app.route('/api/profile', profileRoute)
 
 // Cloudflare Workers entry. Local Node dev lives in server.ts.
 export default app

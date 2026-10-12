@@ -92,6 +92,61 @@ describe('POST /api/improve', () => {
     expect(res.status).toBe(400)
   })
 
+  it('passes no profile to generateImprovement when none is sent', async () => {
+    mockedGenerate.mockResolvedValue('ok')
+    const res = await post({ text: 'hello', style: 'formal' })
+    expect(res.status).toBe(200)
+    expect(mockedGenerate.mock.calls[0][0].profile).toBeUndefined()
+  })
+
+  it('passes a sanitized profile to generateImprovement', async () => {
+    mockedGenerate.mockResolvedValue('ok')
+    const res = await post({
+      text: 'hello',
+      style: 'formal',
+      profile: { tone: 'friendly', verbosity: 'short', emojiUsage: 'none', customInstructions: '  keep\n\nit   brief ' },
+    })
+    expect(res.status).toBe(200)
+    expect(mockedGenerate.mock.calls[0][0].profile).toEqual({
+      tone: 'friendly',
+      verbosity: 'short',
+      emojiUsage: 'none',
+      customInstructions: 'keep it brief',
+    })
+  })
+
+  it('turns a garbage profile into defaults instead of rejecting or forwarding it', async () => {
+    mockedGenerate.mockResolvedValue('ok')
+    const res = await post({
+      text: 'hello',
+      style: 'formal',
+      profile: { tone: 'x', customInstructions: 123, extra: 'ignored' },
+    })
+    expect(res.status).toBe(200)
+    expect(mockedGenerate.mock.calls[0][0].profile).toEqual({
+      tone: 'default',
+      verbosity: 'default',
+      emojiUsage: 'default',
+      customInstructions: '',
+    })
+
+    mockedGenerate.mockClear()
+    const res2 = await post({ text: 'hello', style: 'formal', profile: 'not-an-object' })
+    expect(res2.status).toBe(200)
+    expect(mockedGenerate.mock.calls[0][0].profile).toEqual({
+      tone: 'default',
+      verbosity: 'default',
+      emojiUsage: 'default',
+      customInstructions: '',
+    })
+  })
+
+  it('caps overlong custom instructions in the forwarded profile', async () => {
+    mockedGenerate.mockResolvedValue('ok')
+    await post({ text: 'hello', style: 'formal', profile: { customInstructions: 'a'.repeat(5000) } })
+    expect(mockedGenerate.mock.calls[0][0].profile?.customInstructions).toHaveLength(500)
+  })
+
   it('returns a generic error when the AI call fails', async () => {
     mockedGenerate.mockRejectedValue(new Error('upstream boom'))
 

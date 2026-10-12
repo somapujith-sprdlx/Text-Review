@@ -3,8 +3,11 @@ import { BASE_URL } from './config.js'
 import { getDeviceId } from './deviceId.js'
 import { fetchWithTimeout } from './fetchWithTimeout.js'
 import { signInWithGoogle } from './googleAuth.js'
+import { fetchProfile } from './profile.js'
 
 const STORAGE_KEY = 'deviceStateCache'
+// Mirrors profile.ts's own cache key — see linkGoogleAccount() below.
+const PROFILE_CACHE_KEY = 'writingProfile'
 const TIMEOUT_MS = 10_000
 
 // Cached so the service worker's synchronous Quick Mode trigger decision
@@ -114,5 +117,13 @@ export function completeOnboarding(): Promise<DeviceState | null> {
 export async function linkGoogleAccount(interactive: boolean): Promise<DeviceState | null> {
   const token = await signInWithGoogle(interactive)
   if (!token) return null
-  return sendRequest('/link-google', 'POST', { Authorization: `Bearer ${token}` })
+  const state = await sendRequest('/link-google', 'POST', { Authorization: `Bearer ${token}` })
+  if (state) {
+    // The writing profile belongs to the Google account, not the browser: drop
+    // whatever a previous account left cached and pull this account's own, so
+    // Quick Mode and BYOK never apply someone else's preferences.
+    await chrome.storage.local.remove(PROFILE_CACHE_KEY)
+    void fetchProfile()
+  }
+  return state
 }

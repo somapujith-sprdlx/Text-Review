@@ -4,6 +4,7 @@ import { generateImprovement } from '../services/ai/provider.js'
 import { QuotaExhaustedError } from '../services/ai/errors.js'
 import { getUsageInfo } from '../middleware/usageLimit.js'
 import { STYLES, type StyleId } from './styles.js'
+import { sanitizeProfile } from '../../../shared/profile.js'
 
 const VALID_STYLE_IDS = new Set(STYLES.map((s) => s.id))
 const MAX_TEXT_LENGTH = 2000
@@ -11,7 +12,13 @@ const MAX_TEXT_LENGTH = 2000
 export const improveRoute = new Hono()
 
 improveRoute.post('/', async (c) => {
-  let payload: { text?: unknown; style?: unknown; language?: unknown; customInstruction?: unknown }
+  let payload: {
+    text?: unknown
+    style?: unknown
+    language?: unknown
+    customInstruction?: unknown
+    profile?: unknown
+  }
 
   try {
     payload = await c.req.json()
@@ -19,7 +26,7 @@ improveRoute.post('/', async (c) => {
     return c.json({ error: 'Invalid request body.' }, 400)
   }
 
-  const { text, style, language, customInstruction } = payload
+  const { text, style, language, customInstruction, profile } = payload
 
   if (typeof text !== 'string' || text.trim().length === 0) {
     return c.json({ error: 'Text is required.' }, 400)
@@ -42,6 +49,9 @@ improveRoute.post('/', async (c) => {
       style: style as StyleId,
       language: typeof language === 'string' ? language : undefined,
       customInstruction: typeof customInstruction === 'string' ? customInstruction : undefined,
+      // The extension sends its cached profile; never trust its shape. A
+      // missing profile stays undefined so the prompt is unchanged.
+      profile: profile === undefined || profile === null ? undefined : sanitizeProfile(profile),
     })
 
     return c.json({

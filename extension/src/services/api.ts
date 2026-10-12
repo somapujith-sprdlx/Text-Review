@@ -1,3 +1,4 @@
+import { isDefaultProfile } from '../../../shared/profile.js'
 import type { DeviceState, ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
 import { BASE_URL } from './config.js'
 import { getDeviceId } from './deviceId.js'
@@ -7,6 +8,7 @@ import { fetchWithTimeout } from './fetchWithTimeout.js'
 import { signInWithGoogle } from './googleAuth.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
+import { getCachedProfile } from './profile.js'
 import { saveUsageCache } from './usageCache.js'
 
 const GENERIC_ERROR = 'Something went wrong. Try again.'
@@ -29,10 +31,17 @@ export async function improveText(req: ImproveRequest): Promise<ImproveResponse>
     throw new SignInRequiredError()
   }
 
+  // The writing profile applies to every path: the backend path sends it in
+  // the request body, the BYOK path feeds it to buildPrompt() directly. Quick
+  // Mode runs through this function too, so it gets it for free. Left off
+  // entirely when it's all "no preference" to keep the body unchanged.
+  const profile = await getCachedProfile()
+  const fullReq: ImproveRequest = isDefaultProfile(profile) ? req : { ...req, profile }
+
   const apiKey = await getGroqKey()
   const result = apiKey
-    ? { requestId: crypto.randomUUID(), style: req.style, outputText: await improveWithGroqKey(apiKey, req) }
-    : await improveViaBackend(req)
+    ? { requestId: crypto.randomUUID(), style: req.style, outputText: await improveWithGroqKey(apiKey, fullReq) }
+    : await improveViaBackend(fullReq)
   void reportImprovementCompleted()
   return result
 }

@@ -39,6 +39,28 @@ describe('generateImprovement', () => {
     expect(result).toBe('Dear Sir, I would like to request an extension.')
   })
 
+  it('sends the writer preferences to Groq when a profile is given, and not otherwise', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'rewritten' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { generateImprovement } = await import('../src/services/ai/provider.js')
+    const systemOf = (callIndex: number) =>
+      JSON.parse(fetchMock.mock.calls[callIndex][1].body).messages[0].content as string
+
+    await generateImprovement({
+      text: 'hello',
+      style: 'formal',
+      profile: { tone: 'friendly', verbosity: 'default', emojiUsage: 'none', customInstructions: '' },
+    })
+    await generateImprovement({ text: 'hello', style: 'formal' })
+
+    expect(systemOf(0)).toContain("WRITER'S PREFERENCES")
+    expect(systemOf(0)).toContain('Emojis: never use emojis.')
+    expect(systemOf(1)).not.toContain("WRITER'S PREFERENCES")
+  })
+
   it('rethrows the Groq error when the call fails', async () => {
     vi.stubGlobal(
       'fetch',
