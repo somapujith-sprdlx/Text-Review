@@ -6,6 +6,7 @@ import { reportImprovementCompleted } from './deviceState.js'
 import { replyWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
 import { getCachedProfile } from './profile.js'
+import { pickReplySamples } from './typingStore.js'
 
 export interface ReplyResult {
   replies: ReplyOption[]
@@ -31,7 +32,13 @@ export async function replyToText(text: string): Promise<ReplyResult> {
   // Replies use the writing samples (and tone/emoji prefs) from the profile,
   // so it is attached whenever it holds anything — left off when everything is
   // default to keep the request body minimal, same as improveText().
-  const profile = await getCachedProfile()
+  // When "learn from what I type" is on, a few representative on-device
+  // messages are merged into the samples for this request only: the merged
+  // profile is never written to the cache or the server, and the learned
+  // buffer itself is never uploaded in bulk. The default check runs on the
+  // merged profile so a user with only learned samples still sends them.
+  const cached = await getCachedProfile()
+  const profile = { ...cached, writingSamples: await pickReplySamples(cached.writingSamples) }
   const profileToSend = isDefaultProfile(profile) ? undefined : profile
 
   const apiKey = await getGroqKey()

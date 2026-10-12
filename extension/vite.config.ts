@@ -14,7 +14,9 @@ export default defineConfig({
         sidepanel: resolve(__dirname, 'sidepanel.html'),
         onboarding: resolve(__dirname, 'onboarding.html'),
         'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
-        content: resolve(__dirname, 'src/content/selection.ts'),
+        // The content script is built separately (vite.content.config.ts):
+        // it must be one self-contained classic script, and sharing a chunk
+        // with the side panel would make it start with an `import`.
       },
       output: {
         entryFileNames: '[name].js',

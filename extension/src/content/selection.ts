@@ -1,4 +1,5 @@
 import type { QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
+import { startTypingCapture } from './typingCapture'
 
 // The last editable element (composer / reply box) the user focused. The
 // selected message is usually NOT editable and clicking Reply moves focus
@@ -309,3 +310,6 @@ document.addEventListener(
   },
   true,
 )
+
+// Opt-in "learn from what I type" capture (inert until the user enables it).
+startTypingCapture()
