@@ -7,6 +7,7 @@ const PROFILE: WritingProfile = {
   verbosity: 'short',
   emojiUsage: 'none',
   customInstructions: 'Sign off with "Cheers".',
+  writingSamples: [],
 }
 
 describe('buildPrompt with a writing profile', () => {

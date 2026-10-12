@@ -36,9 +36,16 @@ export interface ImproveErrorResponse {
   usage?: UsageInfo
 }
 
+// What the side panel should do with the selection it is handed. Also the
+// value stored under chrome.storage.session `pendingMode`.
+export type SelectionMode = 'improve' | 'reply'
+
 export interface SelectionMessage {
   type: 'OPEN_SIDE_PANEL_WITH_SELECTION'
   text: string
+  // Absent means 'improve'. 'reply' always opens the side panel (there is no
+  // in-page Quick Mode for it — the user has to pick among the options).
+  mode?: SelectionMode
   // Open the panel even when Quick Mode is on (used to send the user to the
   // Groq-key setup after a Quick Mode request hit the free limit).
   forcePanel?: boolean

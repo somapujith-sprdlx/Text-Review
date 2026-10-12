@@ -2,13 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { compareFigures } from '../../../shared/figures.js'
 import { fetchUsage, improveText } from '../services/api.js'
 import { completeOnboarding, fetchDeviceState } from '../services/deviceState.js'
-import { InvalidKeyError, LimitReachedError, SignInRequiredError } from '../services/errors.js'
+import { InvalidKeyError, LimitReachedError, RatingRequiredError, SignInRequiredError } from '../services/errors.js'
+import { insertReplyText } from '../services/insertReply.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
+import { replyToText } from '../services/reply.js'
+import type { ReplyOption } from '../../../shared/reply.js'
 import type { DeviceState, QuickModeSettings, UsageInfo } from '../types/index.js'
 import { GearIcon } from './components/Icons.js'
 import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
 import { RateGate } from './components/RateGate.js'
+import { ReplyView } from './components/ReplyView.js'
 import { ResultCard, ResultSkeleton } from './components/ResultCard.js'
 import { Settings } from './components/Settings.js'
 import { SignInGate } from './components/SignInGate.js'
@@ -24,6 +28,11 @@ const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: true, styleId: 'improve
 // ends (see startTour/endTour).
 const TOUR_DEMO_TEXT = 'hey can u send that file today'
 const TOUR_DEMO_RESULT = 'Could you please send the file today?'
+
+type Mode = 'improve' | 'reply'
+// Keys the service worker writes (together) when handing a selection to the
+// panel. All of them are consumed together.
+const PENDING_KEYS = ['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired', 'pendingMode']
 
 export function App() {
   const [view, setView] = useState<'main' | 'settings'>('main')
@@ -55,6 +64,11 @@ export function App() {
   const [googleLinked, setGoogleLinked] = useState<boolean | null>(null)
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null)
   const [showTour, setShowTour] = useState(false)
+  // 'reply' = the panel was opened from the Reply button: the selection is a
+  // message the user received and the panel shows drafted replies instead of
+  // an improved version of it. The text state doubles as the received message.
+  const [mode, setMode] = useState<Mode>('improve')
+  const [replies, setReplies] = useState<ReplyOption[]>([])
 
   // Only the latest request may write results — a slow response for an
   // earlier style must not overwrite the one the user just switched to.
@@ -65,14 +79,19 @@ export function App() {
   const queuedSelection = useRef<string | null>(null)
   const queuedLimitReached = useRef(false)
   const queuedRatingRequired = useRef(false)
-  const lastSelection = useRef({ text: '', at: 0 })
+  const queuedMode = useRef<Mode>('improve')
+  const lastSelection = useRef<{ text: string; mode: Mode; at: number }>({ text: '', mode: 'improve', at: 0 })
   // What was selected on the page, so Replace can swap exactly that text.
   const pageSelection = useRef('')
   // Snapshot of real state taken right before the tour overwrites it with
   // the canned demo, restored when the tour ends.
-  const preTourState = useRef<{ text: string; result: string; fromSelection: boolean; sourceForResult: string } | null>(
-    null,
-  )
+  const preTourState = useRef<{
+    text: string
+    result: string
+    fromSelection: boolean
+    sourceForResult: string
+    mode: Mode
+  } | null>(null)
   const tourStarted = useRef(false)
   // Mirror of googleLinked for callbacks (run/takeSelection) that must not
   // re-create — and so re-run the mount effect — whenever it changes.
@@ -129,34 +148,87 @@ export function App() {
     }
   }, [])
 
-  // A new page selection replaces whatever is on screen and is improved right
-  // away in the default style — that's the whole point of selecting it.
+  // Reply mode: draft a few replies to the received message. Shares the
+  // request counter, loading/error/keyPrompt state and gate handling with
+  // run() so a newer request of either kind always wins.
+  const runReply = useCallback(async (input: string) => {
+    if (!input.trim()) return
+    // Never spend a request before sign-in; the gate is (or will be) showing.
+    if (googleLinkedRef.current !== true) return
+    const id = ++requestId.current
+    setLoading(true)
+    setError(null)
+    setKeyPrompt(null)
+    setNotice(null)
+    setReplies([])
+    try {
+      const res = await replyToText(input)
+      if (id === requestId.current) {
+        if (res.replies.length === 0) setError("Lipi couldn't come up with a reply. Try again.")
+        else setReplies(res.replies)
+        if (res.usage) setUsage(res.usage)
+      }
+    } catch (err) {
+      // Account-level, not per-request, so handle these even for a stale request.
+      if (err instanceof SignInRequiredError) {
+        googleLinkedRef.current = false
+        setGoogleLinked(false)
+        if (id === requestId.current) setLoading(false)
+        return
+      }
+      if (err instanceof RatingRequiredError) {
+        setRatingRequired(true)
+        if (id === requestId.current) setLoading(false)
+        return
+      }
+      if (id !== requestId.current) return
+      if (err instanceof LimitReachedError) {
+        setKeyPrompt('limit')
+        if (err.usage) setUsage(err.usage)
+      } else if (err instanceof InvalidKeyError) setKeyPrompt('invalid')
+      else setError(err instanceof Error ? err.message : GENERIC_ERROR)
+    } finally {
+      if (id === requestId.current) setLoading(false)
+    }
+  }, [])
+
+  // A new page selection replaces whatever is on screen. In improve mode it is
+  // improved right away in the default style — that's the whole point of
+  // selecting it. In reply mode it is answered instead (see runReply).
   const takeSelection = useCallback(
-    (incoming: string, limitReached = false, ratingGateHit = false) => {
+    (incoming: string, limitReached = false, ratingGateHit = false, selectionMode: Mode = 'improve') => {
       // Not signed in (or not known yet): the sign-in gate owns the panel.
       // Consume the selection without acting on it — after signing in the
       // user can simply select the text again.
       if (googleLinkedRef.current !== true) {
-        chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired'])
+        chrome.storage.session.remove(PENDING_KEYS)
         return
       }
 
       // The mount-time read and the storage-change event can both deliver the
       // same selection; only act on it once.
       const now = Date.now()
-      if (incoming === lastSelection.current.text && now - lastSelection.current.at < 1500) return
-      lastSelection.current = { text: incoming, at: now }
+      if (
+        incoming === lastSelection.current.text &&
+        selectionMode === lastSelection.current.mode &&
+        now - lastSelection.current.at < 1500
+      ) {
+        return
+      }
+      lastSelection.current = { text: incoming, mode: selectionMode, at: now }
 
       // Consume it, so reopening the panel later doesn't replay a stale selection.
-      chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired'])
+      chrome.storage.session.remove(PENDING_KEYS)
 
       const style = quickModeRef.current.styleId
       pageSelection.current = incoming
       setView('main')
+      setMode(selectionMode)
       setText(incoming)
       setFromSelection(true)
       setStyleId(style)
       setCustomInstruction('')
+      setReplies([])
       if (ratingGateHit) {
         // The background already knows the gate is up — surface RateGate
         // (via the render below) instead of attempting a doomed request.
@@ -171,11 +243,13 @@ export function App() {
         setError(null)
         setNotice(null)
         setKeyPrompt('limit')
+      } else if (selectionMode === 'reply') {
+        void runReply(incoming)
       } else {
         void run(incoming, style, '')
       }
     },
-    [run],
+    [run, runReply],
   )
 
   useEffect(() => {
@@ -183,7 +257,7 @@ export function App() {
 
     Promise.all([
       chrome.storage.local.get(['quickMode', 'groqApiKey', 'deviceStateCache']),
-      chrome.storage.session.get(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired']),
+      chrome.storage.session.get(PENDING_KEYS),
     ]).then(([local, session]) => {
       if (cancelled) return
       const saved = local.quickMode as QuickModeSettings | undefined
@@ -217,10 +291,16 @@ export function App() {
       const incoming = pending || queuedSelection.current
       const incomingLimitReached = pending ? limitReached : queuedLimitReached.current
       const incomingRatingGateHit = pending ? ratingGateHit : queuedRatingRequired.current
+      const incomingMode: Mode = pending
+        ? session.pendingMode === 'reply'
+          ? 'reply'
+          : 'improve'
+        : queuedMode.current
       queuedSelection.current = null
       queuedLimitReached.current = false
       queuedRatingRequired.current = false
-      if (incoming) takeSelection(incoming, incomingLimitReached, incomingRatingGateHit)
+      queuedMode.current = 'improve'
+      if (incoming) takeSelection(incoming, incomingLimitReached, incomingRatingGateHit, incomingMode)
     })
 
     // The panel can finish opening before the service worker's storage write
@@ -232,11 +312,13 @@ export function App() {
         if (typeof incoming === 'string' && incoming) {
           const limitReached = changes.pendingLimitReached?.newValue === true
           const ratingGateHit = changes.pendingRatingRequired?.newValue === true
-          if (settingsReady.current) takeSelection(incoming, limitReached, ratingGateHit)
+          const selectionMode: Mode = changes.pendingMode?.newValue === 'reply' ? 'reply' : 'improve'
+          if (settingsReady.current) takeSelection(incoming, limitReached, ratingGateHit, selectionMode)
           else {
             queuedSelection.current = incoming
             queuedLimitReached.current = limitReached
             queuedRatingRequired.current = ratingGateHit
+            queuedMode.current = selectionMode
           }
         }
       }
@@ -268,7 +350,9 @@ export function App() {
   useEffect(() => {
     if (googleLinked !== true || onboardingCompleted !== false || tourStarted.current) return
     tourStarted.current = true
-    preTourState.current = { text, result, fromSelection, sourceForResult }
+    // The tour spotlights the improve UI, so always show that while it runs.
+    preTourState.current = { text, result, fromSelection, sourceForResult, mode }
+    setMode('improve')
     setText(TOUR_DEMO_TEXT)
     setFromSelection(false)
     setResult(TOUR_DEMO_RESULT)
@@ -287,6 +371,7 @@ export function App() {
       setResult(prev.result)
       setFromSelection(prev.fromSelection)
       setSourceForResult(prev.sourceForResult)
+      setMode(prev.mode)
     }
     preTourState.current = null
     setOnboardingCompleted(true)
@@ -317,8 +402,62 @@ export function App() {
     if (keyPrompt) {
       // The request that hit the limit can now go through — retry it.
       setKeyPrompt(null)
-      void run(text, styleId, customInstruction)
+      if (mode === 'reply') void runReply(text)
+      else void run(text, styleId, customInstruction)
     }
+  }
+
+  // Same selection, other mode. Both cost one request, so they're explicit
+  // user actions rather than anything automatic.
+  function switchToImprove() {
+    const style = quickModeRef.current.styleId
+    setMode('improve')
+    setReplies([])
+    setResult('')
+    setError(null)
+    setKeyPrompt(null)
+    setNotice(null)
+    setStyleId(style)
+    setCustomInstruction('')
+    void run(text, style, '')
+  }
+
+  function switchToReply() {
+    setMode('reply')
+    setResult('')
+    setNotice(null)
+    void runReply(text)
+  }
+
+  async function handleInsertReply(replyText: string) {
+    // Always copy too, so nothing is lost if the page has no reply box.
+    await navigator.clipboard.writeText(replyText).catch(() => undefined)
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.id) throw new Error('no active tab')
+      const [injection] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: insertReplyText,
+        args: [replyText],
+      })
+      setNotice(
+        injection?.result === 'inserted'
+          ? '✓ Inserted in the reply box — review it, then send.'
+          : "Couldn't find a reply box, so it was copied — paste it where you need it.",
+      )
+    } catch {
+      setNotice("Couldn't reach this page, so the reply was copied instead — paste it where you need it.")
+    }
+  }
+
+  function handleCopyReply(replyText: string) {
+    navigator.clipboard.writeText(replyText).catch(() => undefined)
+    setNotice(null)
+  }
+
+  function handleEditReply(index: number, value: string) {
+    setReplies((current) => current.map((r, i) => (i === index ? { ...r, text: value } : r)))
+    setNotice(null)
   }
 
   async function handleRemoveKey() {
@@ -401,35 +540,65 @@ export function App() {
   const hasText = text.trim().length > 0
   const hasRun = loading || result !== '' || error !== null || keyPrompt !== null
 
+  const header = (
+    <header className="mb-4 flex items-center justify-between">
+      <h1 className="text-base font-semibold tracking-tight text-racing-900">Lipi - Text Enhancer</h1>
+      <div className="flex items-center gap-1.5">
+        <span
+          title={
+            savedKey
+              ? 'Requests use your own Groq key'
+              : usage
+                ? `${Math.max(usage.limit - usage.used, 0)} of ${usage.limit} free requests left today`
+                : 'Using the free allowance'
+          }
+          className="rounded-full bg-racing-900/10 px-2 py-0.5 text-[11px] font-medium text-racing-800"
+        >
+          {savedKey ? 'Your Groq key' : usage ? `Free · ${usage.used}/${usage.limit} today` : 'Free'}
+        </span>
+        <button
+          type="button"
+          id="tour-settings"
+          onClick={() => setView('settings')}
+          aria-label="Settings"
+          title="Settings"
+          className="rounded-lg p-1.5 text-racing-900 hover:bg-racing-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brass"
+        >
+          <GearIcon />
+        </button>
+      </div>
+    </header>
+  )
+
+  // Opened from the Reply button: drafted replies instead of an improvement.
+  // Same gates (sign-in, rating) already ran above, and Settings returns here
+  // because `mode` is untouched by view changes.
+  if (mode === 'reply' && !showTour) {
+    return (
+      <div className="mx-auto min-h-screen max-w-md bg-racing-50 px-4 pb-8 pt-4 text-racing-950">
+        {header}
+        <main className="space-y-4">
+          <ReplyView
+            message={text}
+            replies={replies}
+            loading={loading}
+            error={error}
+            notice={notice}
+            onEdit={handleEditReply}
+            onInsert={(value) => void handleInsertReply(value)}
+            onCopy={handleCopyReply}
+            onRegenerate={() => void runReply(text)}
+            onSwitchToImprove={switchToImprove}
+          />
+          {keyPrompt && !loading && <KeySetup reason={keyPrompt} onSaved={handleKeySaved} />}
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-md bg-racing-50 px-4 pb-8 pt-4 text-racing-950">
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-base font-semibold tracking-tight text-racing-900">Lipi - Text Enhancer</h1>
-        <div className="flex items-center gap-1.5">
-          <span
-            title={
-              savedKey
-                ? 'Requests use your own Groq key'
-                : usage
-                  ? `${Math.max(usage.limit - usage.used, 0)} of ${usage.limit} free requests left today`
-                  : 'Using the free allowance'
-            }
-            className="rounded-full bg-racing-900/10 px-2 py-0.5 text-[11px] font-medium text-racing-800"
-          >
-            {savedKey ? 'Your Groq key' : usage ? `Free · ${usage.used}/${usage.limit} today` : 'Free'}
-          </span>
-          <button
-            type="button"
-            id="tour-settings"
-            onClick={() => setView('settings')}
-            aria-label="Settings"
-            title="Settings"
-            className="rounded-lg p-1.5 text-racing-900 hover:bg-racing-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brass"
-          >
-            <GearIcon />
-          </button>
-        </div>
-      </header>
+      {header}
 
       <main className="space-y-4">
         <div id="tour-source-text">
@@ -498,6 +667,18 @@ export function App() {
               onCopy={handleCopy}
               onRetry={submit}
             />
+          </div>
+        )}
+
+        {fromSelection && hasText && !loading && !showTour && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={switchToReply}
+              className="rounded-md px-2 py-1 text-xs font-medium text-racing-800 hover:bg-racing-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brass"
+            >
+              Reply to this instead
+            </button>
           </div>
         )}
       </main>

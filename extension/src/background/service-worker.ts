@@ -1,4 +1,10 @@
-import type { DeviceState, QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
+import type {
+  DeviceState,
+  QuickImproveDoneMessage,
+  QuickModeSettings,
+  SelectionMessage,
+  SelectionMode,
+} from '../types/index'
 import { improveText } from '../services/api.js'
 import { isGoogleLinked, isRatingRequired } from '../services/deviceState.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
@@ -66,16 +72,27 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes.deviceStateCache) cachedDeviceState = changes.deviceStateCache.newValue as DeviceState | undefined
 })
 
-function openPanelWithSelection(tabId: number, text: string, limitReached = false, ratingRequired = false) {
+function openPanelWithSelection(
+  tabId: number,
+  text: string,
+  limitReached = false,
+  ratingRequired = false,
+  mode: SelectionMode = 'improve',
+) {
   // chrome.sidePanel.open() must run synchronously within the user-gesture
   // callback (the onMessage/onClicked handler itself) or Chrome silently
   // drops it — so it's called first, before the async storage write.
   chrome.sidePanel.open({ tabId })
-  // Always set all three keys (not a conditional shape) so every write has
+  // Always set all four keys (not a conditional shape) so every write has
   // the same object type, and so a stale `true` from an earlier
-  // limit/rating-triggered open can never linger for a later, ordinary
-  // selection.
-  chrome.storage.session.set({ pendingSelection: text, pendingLimitReached: limitReached, pendingRatingRequired: ratingRequired })
+  // limit/rating-triggered open — or a stale 'reply' mode — can never linger
+  // for a later, ordinary selection.
+  chrome.storage.session.set({
+    pendingSelection: text,
+    pendingLimitReached: limitReached,
+    pendingRatingRequired: ratingRequired,
+    pendingMode: mode,
+  })
 }
 
 async function quickImprove(tabId: number, text: string, styleId: string) {
@@ -135,6 +152,27 @@ function notifyQuickImproveRedirected(tabId: number) {
   chrome.tabs.sendMessage(tabId, doneMessage).catch(() => {})
 }
 
+// "Reply" has no in-page Quick Mode: the user must pick among several drafts,
+// so it always opens the side panel. The same cached gate state the improve
+// flow checks is forwarded so the panel lands on the right screen at once;
+// an unresolved cache just means a plain open, and the panel re-reads storage
+// itself (sign-in gate first), exactly as for improve.
+function handleReplyTrigger(tabId: number, text: string) {
+  if (!isGoogleLinked(cachedDeviceState)) {
+    openPanelWithSelection(tabId, text, false, false, 'reply')
+    return
+  }
+  if (isRatingRequired(cachedDeviceState)) {
+    openPanelWithSelection(tabId, text, false, true, 'reply')
+    return
+  }
+  if (!cachedHasKey && isLimitReached(cachedUsage)) {
+    openPanelWithSelection(tabId, text, true, false, 'reply')
+    return
+  }
+  openPanelWithSelection(tabId, text, false, false, 'reply')
+}
+
 function handleTrigger(tabId: number, text: string, tabUrl: string | undefined, forcePanel = false) {
   const quickModeEnabled = cachedQuickMode?.enabled ?? DEFAULT_QUICK_MODE.enabled
 
@@ -187,6 +225,11 @@ chrome.runtime.onMessage.addListener((message: SelectionMessage, sender) => {
     return
   }
 
+  if (message.mode === 'reply') {
+    handleReplyTrigger(tabId, message.text)
+    return
+  }
+
   handleTrigger(tabId, message.text, sender.tab?.url, message.forcePanel)
 })
 
@@ -195,18 +238,30 @@ chrome.runtime.onMessage.addListener((message: SelectionMessage, sender) => {
 // a previous life of the worker persists in Chrome regardless — so create()
 // with the same id throws "duplicate id" on every restart after the first.
 // removeAll() first makes this idempotent no matter how many times it runs.
+const MENU_IMPROVE = 'improve-text-with'
+const MENU_REPLY = 'reply-with-lipi'
+
 chrome.contextMenus.removeAll(() => {
   chrome.contextMenus.create({
-    id: 'improve-text-with',
+    id: MENU_IMPROVE,
     title: 'Improve Text with...',
+    contexts: ['selection'],
+  })
+  chrome.contextMenus.create({
+    id: MENU_REPLY,
+    title: 'Reply with Lipi',
     contexts: ['selection'],
   })
 })
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== 'improve-text-with' || !tab?.id || !info.selectionText) {
+  if (!tab?.id || !info.selectionText) {
     return
   }
 
-  handleTrigger(tab.id, info.selectionText, tab.url)
+  if (info.menuItemId === MENU_IMPROVE) {
+    handleTrigger(tab.id, info.selectionText, tab.url)
+  } else if (info.menuItemId === MENU_REPLY) {
+    handleReplyTrigger(tab.id, info.selectionText)
+  }
 })

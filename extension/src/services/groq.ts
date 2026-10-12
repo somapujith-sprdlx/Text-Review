@@ -1,4 +1,6 @@
 import { buildPrompt } from '../../../shared/prompts.js'
+import type { WritingProfile } from '../../../shared/profile.js'
+import { buildReplyPrompt, parseReplyOptions, type ReplyOption } from '../../../shared/reply.js'
 import { STYLES, type StyleId } from '../../../shared/styles.js'
 import type { ImproveRequest } from '../types/index.js'
 import { InvalidKeyError } from './errors.js'
@@ -39,12 +41,9 @@ export async function validateGroqKey(apiKey: string): Promise<boolean> {
   throw new Error(`Groq returned an unexpected error (${res.status}). Try again in a moment.`)
 }
 
-export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): Promise<string> {
-  if (!STYLES.some((s) => s.id === req.style)) {
-    throw new Error('Unknown style.')
-  }
-  const { system, user } = buildPrompt(req.style as StyleId, req.text, req.customInstruction, req.profile)
-
+// One chat completion against the user's own key, with the error mapping both
+// the rewrite and reply paths share. Returns the trimmed model content.
+async function groqComplete(apiKey: string, system: string, user: string, temperature: number): Promise<string> {
   let res: Response
   try {
     res = await fetchWithTimeout(
@@ -58,7 +57,7 @@ export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): P
             { role: 'system', content: system },
             { role: 'user', content: user },
           ],
-          temperature: 0.7,
+          temperature,
         }),
       },
       IMPROVE_TIMEOUT_MS,
@@ -82,4 +81,26 @@ export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): P
   const content = data?.choices?.[0]?.message?.content?.trim()
   if (!content) throw new Error(GENERIC_ERROR)
   return content
+}
+
+export async function improveWithGroqKey(apiKey: string, req: ImproveRequest): Promise<string> {
+  if (!STYLES.some((s) => s.id === req.style)) {
+    throw new Error('Unknown style.')
+  }
+  const { system, user } = buildPrompt(req.style as StyleId, req.text, req.customInstruction, req.profile)
+  return groqComplete(apiKey, system, user, 0.7)
+}
+
+// Drafts the reply options for a received message straight from the browser.
+// The model is asked for JSON; parseReplyOptions() tolerates fences and prose,
+// and an unusable answer (zero options) is an error rather than an empty list.
+export async function replyWithGroqKey(
+  apiKey: string,
+  message: string,
+  profile?: WritingProfile,
+): Promise<ReplyOption[]> {
+  const { system, user } = buildReplyPrompt(message, profile)
+  const options = parseReplyOptions(await groqComplete(apiKey, system, user, 0.8))
+  if (options.length === 0) throw new Error(GENERIC_ERROR)
+  return options
 }

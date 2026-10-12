@@ -17,19 +17,23 @@ const USAGE_TIMEOUT_MS = 10_000
 // Same key deviceState.ts writes the server-side device state under.
 const DEVICE_STATE_CACHE_KEY = 'deviceStateCache'
 
+// Sign-in is compulsory, BYOK included — and BYOK never reaches the backend,
+// so the backend's 401 can't be relied on to stop it. Guard here, before
+// spending a Groq or backend request. A missing cache counts as not linked.
+export async function requireGoogleLink(): Promise<void> {
+  const stored = await chrome.storage.local.get(DEVICE_STATE_CACHE_KEY)
+  if (!isGoogleLinked(stored[DEVICE_STATE_CACHE_KEY] as DeviceState | undefined)) {
+    throw new SignInRequiredError()
+  }
+}
+
 // A saved Groq key always wins: the request goes straight to Groq and never
 // spends the shared free allowance. Either path is reported to
 // /api/device-state/increment afterward — the only place both funnel
 // through — so the lifetime-improvement count (and rating gate) covers BYOK
 // too, even though BYOK requests otherwise never touch this backend.
 export async function improveText(req: ImproveRequest): Promise<ImproveResponse> {
-  // Sign-in is compulsory, BYOK included — and BYOK never reaches the backend,
-  // so the backend's 401 can't be relied on to stop it. Guard here, before
-  // spending a Groq or backend request. A missing cache counts as not linked.
-  const stored = await chrome.storage.local.get(DEVICE_STATE_CACHE_KEY)
-  if (!isGoogleLinked(stored[DEVICE_STATE_CACHE_KEY] as DeviceState | undefined)) {
-    throw new SignInRequiredError()
-  }
+  await requireGoogleLink()
 
   // The writing profile applies to every path: the backend path sends it in
   // the request body, the BYOK path feeds it to buildPrompt() directly. Quick
@@ -59,6 +63,14 @@ async function dropGoogleLink(): Promise<void> {
 }
 
 async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> {
+  return postToBackend<ImproveResponse>('/api/improve', req)
+}
+
+// POSTs JSON to a Google-gated backend route (/api/improve, /api/reply) with
+// the device id and the Google bearer token, and maps the shared error
+// conventions onto the typed errors the UI already understands. Shared so
+// every AI route behaves identically: same timeout, same cache effects.
+export async function postToBackend<T extends { usage?: UsageInfo }>(path: string, payload: unknown): Promise<T> {
   // The backend only serves a verified Google identity (see
   // middleware/googleRequired.ts), so the bearer token is attached the same
   // way services/deviceState.ts does — silently, from Chrome's token cache.
@@ -74,7 +86,7 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
   try {
     const deviceId = await getDeviceId()
     res = await fetchWithTimeout(
-      `${BASE_URL}/api/improve`,
+      `${BASE_URL}${path}`,
       {
         method: 'POST',
         headers: {
@@ -82,12 +94,12 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
           'X-Device-Id': deviceId,
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(req),
+        body: JSON.stringify(payload),
       },
       IMPROVE_TIMEOUT_MS,
     )
   } catch (networkErr) {
-    console.error('Text Quality Enhancer: fetch to /api/improve threw', networkErr)
+    console.error(`Text Quality Enhancer: fetch to ${path} threw`, networkErr)
     // Preserve the real cause (network failure, CORS rejection, etc.) on
     // the error object so callers that log server-side (e.g. the service
     // worker) can diagnose it, while the message itself stays the generic
@@ -113,7 +125,7 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
       throw new LimitReachedError(body?.usage)
     }
 
-    // Backstop only — improveText() checks the cached device state for a
+    // Backstop only — the callers check the cached device state for a
     // linked Google account before a request can even be attempted, so this
     // should rarely fire in normal use. See middleware/googleRequired.ts.
     if (res.status === 401 && body?.code === 'SIGN_IN_REQUIRED') {
@@ -128,11 +140,11 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
       throw new RatingRequiredError()
     }
 
-    console.error('Text Quality Enhancer: /api/improve returned', res.status, bodyText)
+    console.error(`Text Quality Enhancer: ${path} returned`, res.status, bodyText)
     throw new Error(body?.error || GENERIC_ERROR)
   }
 
-  const data = (await res.json()) as ImproveResponse
+  const data = (await res.json()) as T
   if (data.usage) void saveUsageCache(data.usage)
   return data
 }

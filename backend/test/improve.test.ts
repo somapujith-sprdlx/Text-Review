@@ -112,6 +112,7 @@ describe('POST /api/improve', () => {
       verbosity: 'short',
       emojiUsage: 'none',
       customInstructions: 'keep it brief',
+      writingSamples: [],
     })
   })
 
@@ -128,6 +129,7 @@ describe('POST /api/improve', () => {
       verbosity: 'default',
       emojiUsage: 'default',
       customInstructions: '',
+      writingSamples: [],
     })
 
     mockedGenerate.mockClear()
@@ -138,6 +140,7 @@ describe('POST /api/improve', () => {
       verbosity: 'default',
       emojiUsage: 'default',
       customInstructions: '',
+      writingSamples: [],
     })
   })
 

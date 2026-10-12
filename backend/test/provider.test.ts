@@ -52,7 +52,7 @@ describe('generateImprovement', () => {
     await generateImprovement({
       text: 'hello',
       style: 'formal',
-      profile: { tone: 'friendly', verbosity: 'default', emojiUsage: 'none', customInstructions: '' },
+      profile: { tone: 'friendly', verbosity: 'default', emojiUsage: 'none', customInstructions: '', writingSamples: [] },
     })
     await generateImprovement({ text: 'hello', style: 'formal' })
 

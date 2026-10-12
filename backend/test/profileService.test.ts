@@ -18,6 +18,7 @@ function row(overrides: Record<string, unknown> = {}) {
     verbosity: 'default',
     emoji_usage: 'default',
     custom_instructions: '',
+    writing_samples: [],
     ...overrides,
   }
 }
@@ -31,7 +32,13 @@ describe('getProfile', () => {
 
   it('maps the stored row to a WritingProfile', async () => {
     query.mockResolvedValueOnce([
-      row({ tone: 'friendly', verbosity: 'detailed', emoji_usage: 'rare', custom_instructions: 'Be kind.' }),
+      row({
+        tone: 'friendly',
+        verbosity: 'detailed',
+        emoji_usage: 'rare',
+        custom_instructions: 'Be kind.',
+        writing_samples: ['heyyy whats up', 'k sounds gud'],
+      }),
     ])
 
     const profile = await getProfile('g-1')
@@ -41,8 +48,10 @@ describe('getProfile', () => {
       verbosity: 'detailed',
       emojiUsage: 'rare',
       customInstructions: 'Be kind.',
+      writingSamples: ['heyyy whats up', 'k sounds gud'],
     })
     const [sql, params] = query.mock.calls[0]
+    expect(sql).toContain('writing_samples')
     expect(sql).toContain('FROM user_profiles WHERE google_sub = $1')
     expect(params).toEqual(['g-1'])
   })
@@ -61,6 +70,22 @@ describe('getProfile', () => {
   it('fails open to defaults when the database throws', async () => {
     query.mockRejectedValue(new Error('neon down'))
     expect(await getProfile('g-1')).toEqual(DEFAULT_PROFILE)
+  })
+
+  it('treats malformed stored writing_samples as no samples', async () => {
+    for (const bad of ['not json', '{"a":1}', 42, null, { a: 1 }, [1, null, {}]]) {
+      query.mockResolvedValueOnce([row({ writing_samples: bad })])
+      expect((await getProfile('g-1')).writingSamples).toEqual([])
+    }
+  })
+
+  it('accepts writing_samples delivered as a JSON string and caps/cleans them', async () => {
+    const long = 'x'.repeat(500)
+    query.mockResolvedValueOnce([row({ writing_samples: JSON.stringify(['  hi\nthere  ', '', long]) })])
+    const { writingSamples } = await getProfile('g-1')
+    expect(writingSamples).toHaveLength(2)
+    expect(writingSamples[0]).toBe('hi there')
+    expect(writingSamples[1]).toHaveLength(240)
   })
 
   it('sanitizes values read back from the table', async () => {
@@ -86,14 +111,24 @@ describe('saveProfile', () => {
       verbosity: 'short',
       emojiUsage: 'none',
       customInstructions: '  No   slang.  ',
+      writingSamples: ['  heyyy\nwassup  ', 'ok'],
     })
 
-    expect(saved).toEqual({ tone: 'formal', verbosity: 'short', emojiUsage: 'none', customInstructions: 'No slang.' })
+    expect(saved).toEqual({
+      tone: 'formal',
+      verbosity: 'short',
+      emojiUsage: 'none',
+      customInstructions: 'No slang.',
+      writingSamples: [],
+    })
     const [sql, params] = query.mock.calls[0]
     expect(sql).toContain('INSERT INTO user_profiles')
     expect(sql).toContain('ON CONFLICT (google_sub) DO UPDATE')
     expect(sql).toContain('RETURNING')
-    expect(params).toEqual(['g-1', 'formal', 'short', 'none', 'No slang.'])
+    expect(sql).toContain('$6::jsonb')
+    // Samples go over the wire as a JSON string for the ::jsonb cast, cleaned
+    // by sanitizeProfile first (line breaks flattened, whitespace trimmed).
+    expect(params).toEqual(['g-1', 'formal', 'short', 'none', 'No slang.', JSON.stringify(['heyyy wassup', 'ok'])])
   })
 
   it('sanitizes garbage before it reaches the database', async () => {
@@ -101,7 +136,7 @@ describe('saveProfile', () => {
 
     await saveProfile('g-1', { tone: 'x', customInstructions: 123 })
 
-    expect(query.mock.calls[0][1]).toEqual(['g-1', 'default', 'default', 'default', ''])
+    expect(query.mock.calls[0][1]).toEqual(['g-1', 'default', 'default', 'default', '', '[]'])
   })
 
   it('returns null when no database is configured', async () => {

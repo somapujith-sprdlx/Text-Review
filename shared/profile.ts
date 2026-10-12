@@ -13,12 +13,17 @@ export type Verbosity = (typeof VERBOSITIES)[number]
 export type EmojiUsage = (typeof EMOJI_USAGES)[number]
 
 export const MAX_CUSTOM_INSTRUCTIONS_LENGTH = 500
+// Real messages the user pasted so replies can copy how they actually text.
+// Only the reply prompt uses these (see reply.ts) — rewrites never do.
+export const MAX_WRITING_SAMPLES = 8
+export const MAX_WRITING_SAMPLE_LENGTH = 240
 
 export interface WritingProfile {
   tone: Tone
   verbosity: Verbosity
   emojiUsage: EmojiUsage
   customInstructions: string
+  writingSamples: string[]
 }
 
 // 'default' everywhere means "no preference" — buildPrompt adds nothing for it.
@@ -27,6 +32,7 @@ export const DEFAULT_PROFILE: WritingProfile = {
   verbosity: 'default',
   emojiUsage: 'default',
   customInstructions: '',
+  writingSamples: [],
 }
 
 function pick<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
@@ -42,11 +48,21 @@ export function sanitizeProfile(raw: unknown): WritingProfile {
     typeof input.customInstructions === 'string'
       ? input.customInstructions.replace(/\s+/g, ' ').trim().slice(0, MAX_CUSTOM_INSTRUCTIONS_LENGTH)
       : ''
+  // Samples keep their internal quirks (casing, "heyyy", emoji, punctuation) —
+  // only line breaks are flattened so one sample stays one line in a prompt.
+  const samples = Array.isArray(input.writingSamples)
+    ? input.writingSamples
+        .filter((s): s is string => typeof s === 'string')
+        .map((s) => s.replace(/[\r\n]+/g, ' ').trim().slice(0, MAX_WRITING_SAMPLE_LENGTH))
+        .filter((s) => s.length > 0)
+        .slice(0, MAX_WRITING_SAMPLES)
+    : []
   return {
     tone: pick(TONES, input.tone, DEFAULT_PROFILE.tone),
     verbosity: pick(VERBOSITIES, input.verbosity, DEFAULT_PROFILE.verbosity),
     emojiUsage: pick(EMOJI_USAGES, input.emojiUsage, DEFAULT_PROFILE.emojiUsage),
     customInstructions: custom,
+    writingSamples: samples,
   }
 }
 
@@ -55,7 +71,8 @@ export function isDefaultProfile(profile: WritingProfile): boolean {
     profile.tone === 'default' &&
     profile.verbosity === 'default' &&
     profile.emojiUsage === 'default' &&
-    profile.customInstructions === ''
+    profile.customInstructions === '' &&
+    profile.writingSamples.length === 0
   )
 }
 

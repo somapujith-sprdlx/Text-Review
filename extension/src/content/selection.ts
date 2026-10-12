@@ -1,6 +1,19 @@
 import type { QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
 
+// The last editable element (composer / reply box) the user focused. The
+// selected message is usually NOT editable and clicking Reply moves focus
+// away, so insertReplyText() (services/insertReply.ts, injected into this same
+// isolated world) falls back to this to find where to put the reply.
+declare global {
+  interface Window {
+    __lipiLastEditable?: HTMLElement
+  }
+}
+
 let floatingButton: HTMLButtonElement | null = null
+// Sits next to the improve button for the same selection; gone whenever the
+// improve button is, or once the improve button turns into a status display.
+let replyButton: HTMLButtonElement | null = null
 let isProcessing = false
 // 'setup' = Quick Mode hit the free limit and the button now leads to the Groq-key setup.
 let buttonMode: 'improve' | 'setup' = 'improve'
@@ -12,13 +25,20 @@ let buttonMode: 'improve' | 'setup' = 'improve'
 const processingTimeouts = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>()
 const PROCESSING_TIMEOUT_MS = 35_000
 
+function removeReplyButton() {
+  replyButton?.remove()
+  replyButton = null
+}
+
 function removeFloatingButton() {
+  removeReplyButton()
   if (isProcessing) return
   floatingButton?.remove()
   floatingButton = null
 }
 
 function setButtonProcessing(button: HTMLButtonElement) {
+  removeReplyButton()
   isProcessing = true
   button.disabled = true
   button.style.cursor = 'wait'
@@ -47,6 +67,7 @@ function clearProcessingTimeout(button: HTMLButtonElement) {
 }
 
 function offerKeySetup(button: HTMLButtonElement, reason: 'limit' | 'key') {
+  removeReplyButton()
   clearProcessingTimeout(button)
   isProcessing = false
   buttonMode = 'setup'
@@ -123,6 +144,48 @@ function showFloatingButton(selectionText: string, rect: DOMRect) {
 
   document.body.appendChild(button)
   floatingButton = button
+  showReplyButton(selectionText, button)
+}
+
+function showReplyButton(selectionText: string, improveButton: HTMLButtonElement) {
+  const button = document.createElement('button')
+  button.textContent = '💬 Reply'
+  button.style.position = 'fixed'
+  button.style.top = improveButton.style.top
+  button.style.zIndex = '2147483647'
+  button.style.padding = '6px 10px'
+  button.style.borderRadius = '6px'
+  button.style.border = 'none'
+  button.style.background = '#0B3D2E'
+  button.style.color = '#fff'
+  button.style.fontSize = '13px'
+  button.style.cursor = 'pointer'
+  button.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)'
+
+  // Same handling as the improve button: act on mousedown (and swallow it) so
+  // the page's selection and focus — and with it the composer we may need to
+  // insert into later — are left alone.
+  button.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const message: SelectionMessage = { type: 'OPEN_SIDE_PANEL_WITH_SELECTION', text: selectionText, mode: 'reply' }
+    chrome.runtime.sendMessage(message).catch((err) => {
+      console.error('Text Quality Enhancer: failed to reach the extension background script.', err)
+    })
+    // Reply always opens the side panel, which is itself the feedback.
+    removeFloatingButton()
+  })
+
+  document.body.appendChild(button)
+
+  // Right of the improve button; flipped to its left if that would run off
+  // the viewport edge. Measured after insertion since widths depend on text.
+  const improveRect = improveButton.getBoundingClientRect()
+  const width = button.getBoundingClientRect().width
+  let left = improveRect.right + 6
+  if (left + width > window.innerWidth - 4) left = Math.max(improveRect.left - width - 6, 4)
+  button.style.left = `${left}px`
+  replyButton = button
 }
 
 chrome.runtime.onMessage.addListener((message: QuickImproveDoneMessage) => {
@@ -209,7 +272,7 @@ document.addEventListener('selectionchange', () => {
 
 document.addEventListener('mousedown', (e) => {
   isMouseDown = true
-  if (e.target !== floatingButton) {
+  if (e.target !== floatingButton && e.target !== replyButton) {
     removeFloatingButton()
   }
 })
@@ -218,3 +281,31 @@ document.addEventListener('mouseup', () => {
   isMouseDown = false
   evaluateSelection()
 })
+
+// Records the last editable the user focused (see Window.__lipiLastEditable).
+// composedPath()[0] reaches through open shadow roots to the real target.
+// Capture phase so pages that stop propagation can't hide a focus from us.
+function isEditableTarget(el: Element): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false
+  if (el === floatingButton || el === replyButton) return false
+  if (el.tagName === 'TEXTAREA') {
+    const t = el as HTMLTextAreaElement
+    return !t.disabled && !t.readOnly
+  }
+  if (el.tagName === 'INPUT') {
+    const i = el as HTMLInputElement
+    return !i.disabled && !i.readOnly && ['text', 'search', 'email', 'url', 'tel'].includes(i.type)
+  }
+  return el.isContentEditable
+}
+
+document.addEventListener(
+  'focusin',
+  (e) => {
+    const target = e.composedPath()[0]
+    if (target instanceof Element && isEditableTarget(target)) {
+      window.__lipiLastEditable = target
+    }
+  },
+  true,
+)

@@ -14,6 +14,7 @@ vi.mock('../src/services/google.js', () => ({
 import { app } from '../src/index.js'
 import { getProfile, saveProfile } from '../src/services/db/profile.js'
 import { verifyGoogleAccessToken } from '../src/services/google.js'
+import type { WritingProfile } from '../../shared/profile.js'
 
 const mockedGet = vi.mocked(getProfile)
 const mockedSave = vi.mocked(saveProfile)
@@ -22,7 +23,13 @@ const mockedVerify = vi.mocked(verifyGoogleAccessToken)
 const DEVICE_HEADERS = { 'X-Device-Id': 'device-profile-test' }
 const GOOGLE_HEADERS = { ...DEVICE_HEADERS, Authorization: 'Bearer good-token' }
 
-const STORED = { tone: 'friendly', verbosity: 'short', emojiUsage: 'none', customInstructions: 'Be kind.' } as const
+const STORED: WritingProfile = {
+  tone: 'friendly',
+  verbosity: 'short',
+  emojiUsage: 'none',
+  customInstructions: 'Be kind.',
+  writingSamples: ['hey wassup', 'lol ok cool'],
+}
 
 function put(body: unknown, headers: Record<string, string> = GOOGLE_HEADERS) {
   return app.request('/api/profile', {
