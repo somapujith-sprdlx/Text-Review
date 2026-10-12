@@ -11,7 +11,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Must exactly match the extension's origin (chrome-extension://<id>).
 # The ID changes if the unpacked folder moves or the extension is published.
-ALLOWED_ORIGIN = "chrome-extension://gekegjbelncckiijjlbfmemoipdegfng"
+ALLOWED_ORIGIN = "chrome-extension://jfmgmpmahcomjmdacoekafmneogchabj"
 GROQ_MODEL = "openai/gpt-oss-120b"
 # Free requests per device per day before the extension offers the
 # bring-your-own-Groq-key flow.
