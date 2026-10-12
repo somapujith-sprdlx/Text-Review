@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// /api/improve now requires a verified Google identity; /api/usage itself
+// stays open to device-only callers (the first two tests below).
+vi.mock('../src/services/google.js', () => ({
+  verifyGoogleAccessToken: vi.fn(),
+}))
+
 import { app } from '../src/index.js'
+import { verifyGoogleAccessToken } from '../src/services/google.js'
 
 describe('GET /api/usage', () => {
   beforeEach(() => {
     process.env.ALLOWED_ORIGIN = 'chrome-extension://test-ext-id'
+    vi.mocked(verifyGoogleAccessToken).mockResolvedValue({ sub: 'g-usage-test', email: 'a@example.com' })
   })
 
   it('reports zero used for a device that has never made a request', async () => {
@@ -29,7 +38,12 @@ describe('GET /api/usage', () => {
     const headers = { 'x-device-id': 'peek-device-after-improve' }
     await app.request('/api/improve', {
       method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json', Origin: 'chrome-extension://test-ext-id' },
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        Origin: 'chrome-extension://test-ext-id',
+        Authorization: 'Bearer good-token',
+      },
       body: JSON.stringify({ text: 'placeholder', style: 'not-a-real-style' }),
     })
 

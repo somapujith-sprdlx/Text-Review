@@ -1,6 +1,6 @@
 import type { DeviceState, QuickImproveDoneMessage, QuickModeSettings, SelectionMessage } from '../types/index'
 import { improveText } from '../services/api.js'
-import { isRatingRequired } from '../services/deviceState.js'
+import { isGoogleLinked, isRatingRequired } from '../services/deviceState.js'
 import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { isLimitReached, type CachedUsage } from '../services/usageCache.js'
@@ -15,7 +15,10 @@ import { isLimitReached, type CachedUsage } from '../services/usageCache.js'
 // Not destructive, just a rare inconsistency — accepted rather than adding
 // synchronous storage access the platform doesn't provide. Quick Mode is on
 // by default, so an unresolved cache falls back to enabled rather than to
-// opening the panel.
+// opening the panel. The exception is the Google-link check: an unresolved
+// deviceStateCache reads as "not linked", so that same window opens the panel
+// instead — safe, since the panel re-reads storage and shows its sign-in gate
+// or proceeds normally.
 let cachedQuickMode: QuickModeSettings | undefined
 const DEFAULT_QUICK_MODE: QuickModeSettings = { enabled: true, styleId: 'improve' }
 let cachedHasKey = false
@@ -87,6 +90,13 @@ async function quickImprove(tabId: number, text: string, styleId: string) {
     })
     ok = true
   } catch (err) {
+    // SignInRequiredError / RatingRequiredError (the backend backstops — the
+    // synchronous gate checks in handleTrigger normally catch these first)
+    // deliberately fall through to the generic 'error' reason:
+    // chrome.sidePanel.open() needs a live user gesture, which this async
+    // path no longer has, so the best available feedback is the floating
+    // button's red flash. The next click goes through handleTrigger, which
+    // then opens the panel with the right gate.
     reason = err instanceof LimitReachedError ? 'limit' : err instanceof InvalidKeyError ? 'key' : 'error'
     // Quick Mode has no in-page UI to surface a detailed error in — the
     // floating button just stops its spinner and briefly flashes red (see
@@ -131,6 +141,17 @@ function handleTrigger(tabId: number, text: string, tabUrl: string | undefined, 
   // Checked before calling the API, so a page we can't write back to doesn't
   // burn a request — the side panel handles it instead (and still offers Copy).
   if (!forcePanel && quickModeEnabled && canInjectInto(tabUrl)) {
+    // Google sign-in is compulsory, so nothing runs until an account is
+    // linked — including BYOK. Checked before the rating gate since an
+    // unlinked device has no meaningful rating state yet. A missing cache
+    // (never fetched, or not yet resolved after a cold start) counts as not
+    // linked: the plain panel open below is safe, because the panel re-reads
+    // storage itself and either shows its sign-in gate or just proceeds.
+    if (!isGoogleLinked(cachedDeviceState)) {
+      openPanelWithSelection(tabId, text)
+      notifyQuickImproveRedirected(tabId)
+      return
+    }
     // Applies regardless of a saved Groq key — BYOK requests still funnel
     // through improveText()'s reportImprovementCompleted() call, so the
     // lifetime count (and this gate) covers them too, not just free-tier use.

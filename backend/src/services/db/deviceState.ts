@@ -141,12 +141,18 @@ export async function markRatingClaimed(identity: Identity): Promise<DeviceState
   }
 }
 
-// Links a verified Google identity to this device's progress. If that
-// google_sub is already linked to a different (older) row — e.g. the same
-// person signing in again after a reinstall gave them a new device_id —
-// that existing row is authoritative and is returned as-is, untouched;
-// otherwise the current device_id's row gains the google_sub/email so its
-// already-at-the-threshold progress becomes tied to the account from here on.
+// Links a verified Google identity to this device's progress. Three cases:
+//  (a) that google_sub already has a row — e.g. the same person signing in
+//      again after a reinstall gave them a new device_id — that row is
+//      authoritative and is returned as-is, untouched;
+//  (b) otherwise, if this device_id's row has no google_sub yet (or doesn't
+//      exist), it gains the google_sub/email so pre-existing installs keep
+//      their already-accumulated progress, now tied to the account;
+//  (c) otherwise the device row is already linked to a DIFFERENT account, so
+//      a new row is created for this sub under a synthetic, unique device_id
+//      with fresh counters. The other account's row is never touched, so
+//      switching Google accounts on one device can't inherit (or wipe)
+//      anyone's lifetime count or rating-claimed state.
 export async function linkGoogleAccount(deviceId: string, sub: string, email: string): Promise<DeviceStateRow> {
   const sql = getSql()
   if (!sql) return DEFAULT_STATE
@@ -156,13 +162,27 @@ export async function linkGoogleAccount(deviceId: string, sub: string, email: st
     ])) as RawRow[]
     if (existing.length > 0) return toRow(existing[0])
 
+    // The WHERE on DO UPDATE makes the take-over conditional: a device row
+    // that already carries a google_sub yields zero rows instead of being
+    // overwritten.
+    const attached = (await sql.query(
+      `INSERT INTO device_state (device_id, google_sub, email, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (device_id) DO UPDATE
+         SET google_sub = EXCLUDED.google_sub, email = EXCLUDED.email, updated_at = now()
+         WHERE device_state.google_sub IS NULL
+       RETURNING ${RETURNING}`,
+      [deviceId, sub, email],
+    )) as RawRow[]
+    if (attached.length > 0) return toRow(attached[0])
+
     const rows = (await sql.query(
       `INSERT INTO device_state (device_id, google_sub, email, updated_at)
        VALUES ($1, $2, $3, now())
        ON CONFLICT (device_id) DO UPDATE
-         SET google_sub = $2, email = $3, updated_at = now()
+         SET email = EXCLUDED.email, updated_at = now()
        RETURNING ${RETURNING}`,
-      [deviceId, sub, email],
+      [`${deviceId}:${sub}`, sub, email],
     )) as RawRow[]
     return rows.length > 0 ? toRow(rows[0]) : DEFAULT_STATE
   } catch (err) {

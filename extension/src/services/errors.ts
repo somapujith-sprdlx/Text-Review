@@ -15,6 +15,16 @@ export class InvalidKeyError extends Error {
   }
 }
 
+// Google sign-in is compulsory — the backend answers 401 SIGN_IN_REQUIRED
+// when /api/improve is called with only a device id (see
+// middleware/googleRequired.ts). Primary enforcement is client-side (App.tsx
+// shows SignInGate before anything else); this is the backstop.
+export class SignInRequiredError extends Error {
+  constructor() {
+    super('Please sign in with Google to use Lipi.')
+  }
+}
+
 // Backend-side backstop for the rating gate (see middleware/ratingGate.ts).
 // Primary enforcement is client-side (App.tsx checks cached device state
 // before this could ever fire) — this only surfaces if that check was

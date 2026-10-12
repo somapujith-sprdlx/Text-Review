@@ -23,6 +23,12 @@ export function isRatingRequired(cached: DeviceState | undefined): boolean {
   return cached?.ratingRequired ?? false
 }
 
+// Sign-in is compulsory, so — unlike isRatingRequired — a missing cache means
+// "not linked", not "fine": nothing may run until a Google account is linked.
+export function isGoogleLinked(cached: DeviceState | undefined): boolean {
+  return cached?.googleLinked === true
+}
+
 export function isOnboardingCompleted(cached: DeviceState | undefined): boolean {
   return cached?.onboardingCompleted ?? false
 }
@@ -45,7 +51,10 @@ async function sendRequest(
     if (!res.ok) return null
     const body = (await res.json()) as { deviceState?: DeviceState }
     if (!body.deviceState) return null
-    void saveDeviceStateCache(body.deviceState)
+    // Awaited (not fire-and-forget): improveText() reads this cache for its
+    // sign-in guard right after linkGoogleAccount() resolves, so the write
+    // has to have landed by then.
+    await saveDeviceStateCache(body.deviceState)
     return body.deviceState
   } catch {
     return null

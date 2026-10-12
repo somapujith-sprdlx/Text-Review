@@ -7,6 +7,7 @@ import { deviceStateRoute } from './routes/deviceState.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import { usageLimit } from './middleware/usageLimit.js'
 import { ratingGate } from './middleware/ratingGate.js'
+import { googleRequired } from './middleware/googleRequired.js'
 
 export const app = new Hono()
 
@@ -21,6 +22,9 @@ app.use(
 // allowance (per device, resets daily) — the latter is what the "Free" badge
 // in the extension actually promises, and survives Worker restarts.
 app.use('/api/improve', rateLimit({ limit: 20, windowMs: 60_000 }))
+// Sign-in is compulsory: device-only callers are refused before any quota is
+// spent, so usageLimit/ratingGate below only ever see verified Google identities.
+app.use('/api/improve', googleRequired)
 app.use('/api/improve', usageLimit({ limit: Number(process.env.FREE_DAILY_LIMIT) || 20, kvBinding: 'USAGE_KV' }))
 app.use('/api/improve', ratingGate)
 

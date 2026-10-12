@@ -1,9 +1,10 @@
-import type { ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
+import type { DeviceState, ImproveRequest, ImproveResponse, ImproveErrorResponse, UsageInfo } from '../types/index.js'
 import { BASE_URL } from './config.js'
 import { getDeviceId } from './deviceId.js'
-import { reportImprovementCompleted } from './deviceState.js'
-import { LimitReachedError, RatingRequiredError } from './errors.js'
+import { isGoogleLinked, reportImprovementCompleted } from './deviceState.js'
+import { LimitReachedError, RatingRequiredError, SignInRequiredError } from './errors.js'
 import { fetchWithTimeout } from './fetchWithTimeout.js'
+import { signInWithGoogle } from './googleAuth.js'
 import { improveWithGroqKey } from './groq.js'
 import { getGroqKey } from './keyStore.js'
 import { saveUsageCache } from './usageCache.js'
@@ -11,6 +12,8 @@ import { saveUsageCache } from './usageCache.js'
 const GENERIC_ERROR = 'Something went wrong. Try again.'
 const IMPROVE_TIMEOUT_MS = 25_000
 const USAGE_TIMEOUT_MS = 10_000
+// Same key deviceState.ts writes the server-side device state under.
+const DEVICE_STATE_CACHE_KEY = 'deviceStateCache'
 
 // A saved Groq key always wins: the request goes straight to Groq and never
 // spends the shared free allowance. Either path is reported to
@@ -18,6 +21,14 @@ const USAGE_TIMEOUT_MS = 10_000
 // through — so the lifetime-improvement count (and rating gate) covers BYOK
 // too, even though BYOK requests otherwise never touch this backend.
 export async function improveText(req: ImproveRequest): Promise<ImproveResponse> {
+  // Sign-in is compulsory, BYOK included — and BYOK never reaches the backend,
+  // so the backend's 401 can't be relied on to stop it. Guard here, before
+  // spending a Groq or backend request. A missing cache counts as not linked.
+  const stored = await chrome.storage.local.get(DEVICE_STATE_CACHE_KEY)
+  if (!isGoogleLinked(stored[DEVICE_STATE_CACHE_KEY] as DeviceState | undefined)) {
+    throw new SignInRequiredError()
+  }
+
   const apiKey = await getGroqKey()
   const result = apiKey
     ? { requestId: crypto.randomUUID(), style: req.style, outputText: await improveWithGroqKey(apiKey, req) }
@@ -26,7 +37,30 @@ export async function improveText(req: ImproveRequest): Promise<ImproveResponse>
   return result
 }
 
+// Called when the backend (or Chrome) says there's no usable Google
+// identity, so the cached "linked" flag can't keep letting the service
+// worker's synchronous Quick Mode check through. Rewriting the cache also
+// fires the panel's storage listener, which swaps in SignInGate.
+async function dropGoogleLink(): Promise<void> {
+  const stored = await chrome.storage.local.get(DEVICE_STATE_CACHE_KEY)
+  const cached = stored[DEVICE_STATE_CACHE_KEY] as DeviceState | undefined
+  if (cached?.googleLinked) {
+    await chrome.storage.local.set({ [DEVICE_STATE_CACHE_KEY]: { ...cached, googleLinked: false, email: null } })
+  }
+}
+
 async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> {
+  // The backend only serves a verified Google identity (see
+  // middleware/googleRequired.ts), so the bearer token is attached the same
+  // way services/deviceState.ts does — silently, from Chrome's token cache.
+  // Done before the try below so a missing token surfaces as
+  // SignInRequiredError instead of being flattened into the generic error.
+  const token = await signInWithGoogle(false)
+  if (!token) {
+    await dropGoogleLink()
+    throw new SignInRequiredError()
+  }
+
   let res: Response
   try {
     const deviceId = await getDeviceId()
@@ -34,7 +68,11 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
       `${BASE_URL}/api/improve`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-Id': deviceId,
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(req),
       },
       IMPROVE_TIMEOUT_MS,
@@ -64,6 +102,14 @@ async function improveViaBackend(req: ImproveRequest): Promise<ImproveResponse> 
     if (res.status === 429) {
       if (body?.usage) void saveUsageCache(body.usage)
       throw new LimitReachedError(body?.usage)
+    }
+
+    // Backstop only — improveText() checks the cached device state for a
+    // linked Google account before a request can even be attempted, so this
+    // should rarely fire in normal use. See middleware/googleRequired.ts.
+    if (res.status === 401 && body?.code === 'SIGN_IN_REQUIRED') {
+      await dropGoogleLink()
+      throw new SignInRequiredError()
     }
 
     // Backstop only — App.tsx checks cached device state before a request

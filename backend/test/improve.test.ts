@@ -3,17 +3,28 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('../src/services/ai/provider.js', () => ({
   generateImprovement: vi.fn(),
 }))
+vi.mock('../src/services/google.js', () => ({
+  verifyGoogleAccessToken: vi.fn(),
+}))
 
 import { app } from '../src/index.js'
 import { generateImprovement } from '../src/services/ai/provider.js'
 import { QuotaExhaustedError } from '../src/services/ai/errors.js'
+import { verifyGoogleAccessToken } from '../src/services/google.js'
 
 const mockedGenerate = vi.mocked(generateImprovement)
+const mockedVerify = vi.mocked(verifyGoogleAccessToken)
 
-function post(body: unknown, origin = 'chrome-extension://test-ext-id') {
+const DEVICE_HEADERS = { 'X-Device-Id': 'device-improve-test' }
+const GOOGLE_HEADERS = { ...DEVICE_HEADERS, Authorization: 'Bearer good-token' }
+
+// Sign-in is compulsory, so by default a request presents a verified Google
+// identity as well as the device id; pass different headers to test the
+// signed-out paths.
+function post(body: unknown, origin = 'chrome-extension://test-ext-id', authHeaders: Record<string, string> = GOOGLE_HEADERS) {
   return app.request('/api/improve', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: origin },
+    headers: { 'Content-Type': 'application/json', Origin: origin, ...authHeaders },
     body: JSON.stringify(body),
   })
 }
@@ -21,7 +32,30 @@ function post(body: unknown, origin = 'chrome-extension://test-ext-id') {
 describe('POST /api/improve', () => {
   beforeEach(() => {
     mockedGenerate.mockReset()
+    mockedVerify.mockReset()
+    mockedVerify.mockResolvedValue({ sub: 'g-improve-test', email: 'a@example.com' })
     process.env.ALLOWED_ORIGIN = 'chrome-extension://test-ext-id'
+  })
+
+  it('returns 401 SIGN_IN_REQUIRED when only a device id is presented', async () => {
+    const res = await post({ text: 'hello', style: 'formal' }, undefined, DEVICE_HEADERS)
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'Please sign in with Google to use Lipi.', code: 'SIGN_IN_REQUIRED' })
+    expect(mockedGenerate).not.toHaveBeenCalled()
+  })
+
+  it('returns 401 SIGN_IN_REQUIRED when the bearer token is rejected by Google', async () => {
+    mockedVerify.mockResolvedValue(null)
+    const res = await post({ text: 'hello', style: 'formal' })
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ code: 'SIGN_IN_REQUIRED' })
+    expect(mockedGenerate).not.toHaveBeenCalled()
+  })
+
+  it('returns 401 SIGN_IN_REQUIRED when no identity is presented at all', async () => {
+    const res = await post({ text: 'hello', style: 'formal' }, undefined, {})
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ code: 'SIGN_IN_REQUIRED' })
   })
 
   it('returns the improved text on success', async () => {

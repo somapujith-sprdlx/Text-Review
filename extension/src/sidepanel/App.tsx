@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { compareFigures } from '../../../shared/figures.js'
 import { fetchUsage, improveText } from '../services/api.js'
 import { completeOnboarding, fetchDeviceState } from '../services/deviceState.js'
-import { InvalidKeyError, LimitReachedError } from '../services/errors.js'
+import { InvalidKeyError, LimitReachedError, SignInRequiredError } from '../services/errors.js'
 import { replaceSelectionText } from '../services/insertText.js'
 import { clearGroqKey } from '../services/keyStore.js'
 import type { DeviceState, QuickModeSettings, UsageInfo } from '../types/index.js'
@@ -11,6 +11,7 @@ import { KeySetup, type KeyPromptReason } from './components/KeySetup.js'
 import { RateGate } from './components/RateGate.js'
 import { ResultCard, ResultSkeleton } from './components/ResultCard.js'
 import { Settings } from './components/Settings.js'
+import { SignInGate } from './components/SignInGate.js'
 import { SourceText } from './components/SourceText.js'
 import { StylePicker } from './components/StylePicker.js'
 import { Tour } from './components/Tour.js'
@@ -48,6 +49,10 @@ export function App() {
   // as usage above. onboardingCompleted null = not known yet, so the tour
   // doesn't flash on before we're sure it's actually needed.
   const [ratingRequired, setRatingRequired] = useState(false)
+  // Google sign-in is compulsory and comes before everything else. null = not
+  // known yet (cache read / first fetch still pending): render an empty shell
+  // rather than flashing the main UI or the gate.
+  const [googleLinked, setGoogleLinked] = useState<boolean | null>(null)
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null)
   const [showTour, setShowTour] = useState(false)
 
@@ -69,14 +74,25 @@ export function App() {
     null,
   )
   const tourStarted = useRef(false)
+  // Mirror of googleLinked for callbacks (run/takeSelection) that must not
+  // re-create — and so re-run the mount effect — whenever it changes.
+  const googleLinkedRef = useRef<boolean | null>(null)
+
+  function setLinked(linked: boolean) {
+    googleLinkedRef.current = linked
+    setGoogleLinked(linked)
+  }
 
   function applyDeviceState(state: DeviceState) {
+    setLinked(state.googleLinked === true)
     setRatingRequired(state.ratingRequired)
     setOnboardingCompleted(state.onboardingCompleted)
   }
 
   const run = useCallback(async (input: string, style: string, custom: string) => {
     if (!input.trim()) return
+    // Never spend a request before sign-in; the gate is (or will be) showing.
+    if (googleLinkedRef.current !== true) return
     const id = ++requestId.current
     setLoading(true)
     setError(null)
@@ -95,6 +111,13 @@ export function App() {
         if (res.usage) setUsage(res.usage)
       }
     } catch (err) {
+      // Account-level, not per-request, so handle it even for a stale request.
+      if (err instanceof SignInRequiredError) {
+        googleLinkedRef.current = false
+        setGoogleLinked(false)
+        if (id === requestId.current) setLoading(false)
+        return
+      }
       if (id !== requestId.current) return
       if (err instanceof LimitReachedError) {
         setKeyPrompt('limit')
@@ -110,6 +133,14 @@ export function App() {
   // away in the default style — that's the whole point of selecting it.
   const takeSelection = useCallback(
     (incoming: string, limitReached = false, ratingGateHit = false) => {
+      // Not signed in (or not known yet): the sign-in gate owns the panel.
+      // Consume the selection without acting on it — after signing in the
+      // user can simply select the text again.
+      if (googleLinkedRef.current !== true) {
+        chrome.storage.session.remove(['pendingSelection', 'pendingLimitReached', 'pendingRatingRequired'])
+        return
+      }
+
       // The mount-time read and the storage-change event can both deliver the
       // same selection; only act on it once.
       const now = Date.now()
@@ -172,7 +203,11 @@ export function App() {
       const cachedState = local.deviceStateCache as DeviceState | undefined
       if (cachedState) applyDeviceState(cachedState)
       void fetchDeviceState().then((state) => {
-        if (!cancelled && state) applyDeviceState(state)
+        if (cancelled) return
+        if (state) applyDeviceState(state)
+        // First fetch failed and there was no cache either: treat as not
+        // linked so the user sees the sign-in screen, never a blank panel.
+        else if (googleLinkedRef.current === null) setLinked(false)
       })
 
       settingsReady.current = true
@@ -228,9 +263,10 @@ export function App() {
 
   // First panel open after install (onboardingCompleted === false, fetched
   // above) — take over with the guided tour once, using a canned example so
-  // every step has something real to spotlight without an AI call.
+  // every step has something real to spotlight without an AI call. Waits for
+  // sign-in so it never mutates state under the sign-in screen.
   useEffect(() => {
-    if (onboardingCompleted !== false || tourStarted.current) return
+    if (googleLinked !== true || onboardingCompleted !== false || tourStarted.current) return
     tourStarted.current = true
     preTourState.current = { text, result, fromSelection, sourceForResult }
     setText(TOUR_DEMO_TEXT)
@@ -241,7 +277,7 @@ export function App() {
     // Deliberately not depending on text/result/etc. — this must only ever
     // run once, gated by tourStarted, not re-run when those change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onboardingCompleted])
+  }, [googleLinked, onboardingCompleted])
 
   function endTour() {
     setShowTour(false)
@@ -294,6 +330,13 @@ export function App() {
     applyDeviceState(state)
   }
 
+  // The returned row is authoritative: if this Google account was already
+  // used on another install it may carry onboardingCompleted/ratingRequired,
+  // which the render order below handles.
+  function handleSignedIn(state: DeviceState) {
+    applyDeviceState(state)
+  }
+
   async function handleReplace() {
     // Always copy too, so nothing is lost if the page has no editable field.
     await navigator.clipboard.writeText(result).catch(() => undefined)
@@ -321,6 +364,18 @@ export function App() {
   }
 
   const figures = useMemo(() => compareFigures(sourceForResult, result), [sourceForResult, result])
+
+  // Not known yet (cache read / first fetch pending): neutral shell, so
+  // neither the main UI nor a gate flashes.
+  if (googleLinked === null) {
+    return <div className="min-h-screen bg-racing-50" aria-busy="true" />
+  }
+
+  // Compulsory sign-in comes before everything, including the tour and the
+  // rating gate. See SignInGate.tsx.
+  if (!googleLinked) {
+    return <SignInGate onSignedIn={handleSignedIn} />
+  }
 
   // Takes over the whole panel, including Settings — a hard gate, not just
   // a nudge on the main flow. See services/deviceState.ts / RateGate.tsx.
